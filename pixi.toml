@@ -1,0 +1,55 @@
+[workspace]
+name = "dishonored-head-tracking"
+version = "0.0.0"
+description = "Head tracking mod for Dishonored using OpenTrack"
+license = "MIT"
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tasks]
+# Sync the cameraunlock-core submodule to its tracked branch.
+sync = "git submodule update --remote cameraunlock-core"
+
+# Configure CMake build (x86 / Win32 - Dishonored is a 32-bit UE3 game).
+# No -G: let CMake auto-detect the installed Visual Studio generator. Pinning
+# "Visual Studio 17 2022" broke on CI once the windows runner image moved to
+# VS 2026 (VS 17 absent); auto-detect picks whatever VS the machine has.
+setup = { cmd = """
+    powershell -Command "if (-not (Test-Path 'build')) { cmake -B build -A Win32 } else { Write-Host 'Build directory exists, skipping setup' -ForegroundColor Yellow }"
+""" }
+
+# Build debug configuration.
+build = { cmd = "cmake --build build --config Debug", depends-on = ["setup"] }
+
+# Build release configuration.
+build-release = { cmd = "cmake --build build --config Release", depends-on = ["setup"] }
+
+# Build and run the native unit tests (pure INI, FOV, rotator and projection logic).
+test = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1" }
+
+# Build + deploy release to the game directory.
+install = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 Release", depends-on = ["build-release"] }
+
+# Remove the mod from the game directory. /y keeps it prompt-free under pixi (no TTY).
+uninstall = "scripts\\uninstall.cmd /y"
+
+# Package release ZIPs (installer + nexus).
+package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release"] }
+
+# Clean build artifacts. No $vars in inline commands - pixi's shell eats them before PowerShell runs.
+clean = { cmd = """
+    powershell -Command "if (Test-Path build) { Remove-Item build -Recurse -Force }; if (Test-Path build-tests) { Remove-Item build-tests -Recurse -Force }; if (Test-Path bin) { Remove-Item bin -Recurse -Force }; Write-Host 'Build artifacts cleaned' -ForegroundColor Green"
+""" }
+
+# Automated release workflow (version bump, changelog, tag, push).
+release = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/release.ps1" }
+
+# Bump vendored Ultimate ASI Loader to the latest pinned upstream. Manual; commit the result.
+update-deps = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/update-deps.ps1" }
+
+# Zero the third-party DLLs Ultimate ASI Loader carries as resources out of the
+# vendored copy. update-deps runs this; package re-runs it in -VerifyOnly mode.
+strip-loader = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/strip-loader-payload.ps1 -Path vendor/ultimate-asi-loader/dinput8.dll" }
+
+[dependencies]
+# No pixi dependencies - using system CMake and Visual Studio 2022.
