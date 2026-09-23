@@ -8,7 +8,7 @@ An unofficial head tracking mod for Dishonored that moves the view with your hea
 
 - **Decoupled look and aim** - head tracking moves the rendered view; weapon fire, prompts and enemy awareness still follow your mouse or controller
 - **6DOF positional tracking** - lean and peek with head position
-- **Works with any OpenTrack-compatible source** - a webcam, a phone app, TrackIR, or anything else that sends the OpenTrack UDP pose to port 4242
+- **Works with any OpenTrack compatible tracker** - free options available for PC, iOS and Android
 
 ## Requirements
 
@@ -17,6 +17,13 @@ An unofficial head tracking mod for Dishonored that moves the view with your hea
 - Windows 10 or 11. The game is 32-bit, so the mod ships as a 32-bit `.asi`.
 
 ## Installation
+
+### Lopari
+
+Download [Lopari](https://lopari.app), choose **Dishonored**, and click
+**Play with head tracking**.
+
+### Standalone Installer
 
 1. Download the installer ZIP from the [Releases page](https://github.com/itsloopyo/dishonored-headtracking/releases).
 2. Extract it anywhere.
