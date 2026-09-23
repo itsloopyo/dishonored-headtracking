@@ -5,7 +5,11 @@
 #
 # Usage: deploy.ps1 [Debug|Release] [GamePath]
 # Defaults to Debug. An explicit GamePath wins over auto-detection
-# (same contract as install.cmd).
+# (same contract as install.cmd) and targets that install alone.
+# Without one, every installed copy is deployed to: owning Dishonored on
+# more than one store is ordinary, and deploying to whichever one sorts
+# first leaves the other running the build it was last given - which reads
+# in game as a fix that did nothing.
 
 param(
     [ValidateSet('Debug', 'Release')]
@@ -28,19 +32,22 @@ if ($GamePath) {
     if (-not (Test-Path $GamePath)) {
         throw "Explicit game path does not exist: $GamePath"
     }
-    $gamePath = $GamePath
+    $gamePaths = @($GamePath)
 } else {
     Import-Module (Join-Path $projectDir 'cameraunlock-core/powershell/GamePathDetection.psm1') -Force
-    $gamePath = Find-GamePath -GameId 'dishonored'
-    if (-not $gamePath) {
+    $gamePaths = @(Find-AllGamePaths -GameId 'dishonored')
+    if ($gamePaths.Count -eq 0) {
         throw "Could not locate Dishonored. Set DISHONORED_PATH, install via Steam, or pass the game path: deploy.ps1 $Configuration <path>"
     }
+    Write-Host "Found $($gamePaths.Count) installation(s) of Dishonored" -ForegroundColor Cyan
 }
 
-$exeDir = Join-Path $gamePath 'Binaries\Win32'
-if (-not (Test-Path $exeDir)) {
-    throw "Expected exe directory not found: $exeDir"
-}
+foreach ($path in $gamePaths) {
+    $exeDir = Join-Path $path 'Binaries\Win32'
+    if (-not (Test-Path $exeDir)) {
+        throw "Expected exe directory not found: $exeDir"
+    }
 
-Copy-Item $asi -Destination $exeDir -Force
-Write-Host "Deployed: $asi -> $exeDir" -ForegroundColor Green
+    Copy-Item $asi -Destination $exeDir -Force
+    Write-Host "Deployed: $asi -> $exeDir" -ForegroundColor Green
+}

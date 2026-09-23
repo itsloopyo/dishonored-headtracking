@@ -7,6 +7,7 @@ channels = ["conda-forge"]
 platforms = ["win-64"]
 
 [tasks]
+update-submodule = "git submodule update --remote cameraunlock-core && powershell -NoProfile -ExecutionPolicy Bypass -File cameraunlock-core/scripts/update-submodule.ps1"
 # Sync the cameraunlock-core submodule to its tracked branch.
 sync = "git submodule update --remote cameraunlock-core"
 
@@ -27,11 +28,12 @@ build-release = { cmd = "cmake --build build --config Release", depends-on = ["s
 # Build and run the native unit tests (pure INI, FOV, rotator and projection logic).
 test = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1" }
 
-# Build + deploy release to the game directory.
+# Build + deploy release to every installed copy of the game.
 install = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 Release", depends-on = ["build-release"] }
 
-# Remove the mod from the game directory. /y keeps it prompt-free under pixi (no TTY).
-uninstall = "scripts\\uninstall.cmd /y"
+# Remove the mod from every installed copy. /y keeps it prompt-free under pixi
+# (no TTY); the wrapper loops uninstall.cmd, which itself takes one path.
+uninstall = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/uninstall-all.ps1" }
 
 # Package release ZIPs (installer + nexus).
 package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release"] }
