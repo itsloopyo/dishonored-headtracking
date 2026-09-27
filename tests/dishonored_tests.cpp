@@ -13,7 +13,7 @@
 #include "aim_projection.h"
 #include "camera_collision.h"
 #include "config.h"
-#include "config_sanitize.h"
+#include "legacy_config/config_sanitize.h"
 #include "fov_range.h"
 #include "heap_ptr.h"
 #include "ue3_math.h"
@@ -26,6 +26,9 @@
 #include <limits>
 
 using namespace DishonoredHeadTracking;
+using legacy::SanitizeFinite;
+using legacy::SanitizePositiveLimit;
+using legacy::SanitizeSmoothing;
 
 namespace {
 

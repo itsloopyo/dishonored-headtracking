@@ -3,12 +3,10 @@
 
 #include "config.h"
 
-#include "config_sanitize.h"
-#include "fov_range.h"
+#include "legacy_config/legacy_config.h"
 #include "logging.h"
 
 #include "cameraunlock/config/ini_reader.h"
-#include "cameraunlock/input/hotkey_poller.h"
 
 #include <windows.h>
 
@@ -16,10 +14,9 @@ namespace DishonoredHeadTracking {
 
 namespace {
 
-// Every default and bound this file writes and reads lives in config.h, so the writer,
-// the reader's per-key fallback and the Config member initialisers cannot drift apart.
-// The float-typed defaults widen to double for the WriteDouble calls and match ReadFloat
-// exactly on the read side.
+// Every default this file writes lives in config.h, beside the Config member initialisers.
+// The reader is frozen in legacy_config/, which holds its own copy, as the build it was
+// taken from did.
 //
 // Note what is NOT here: the protocol-to-engine sign conversions. Position X and Z are
 // mirrored relative to UE3 and both are converted at the engine boundary in
@@ -143,160 +140,6 @@ bool WriteDefaultIni(const char* path) {
     return true;
 }
 
-// Warned once per process rather than once per load: config is reloadable, and
-// repeating this on every reload buries it.
-//
-// The old value is deliberately NOT migrated into the new keys. The single
-// Smoothing value carried a hidden 0.15 floor, so the number in an existing
-// config does not mean what it used to: copying it across would hand a local
-// user smoothing they never chose under the new semantics, and copying it into
-// only one of the two keys would be a guess about which connection they were on.
-void WarnRetiredSmoothingKey(const cameraunlock::IniReader& reader,
-                             const char* section, const char* key) {
-    static bool warned = false;
-    if (warned) return;
-    if (reader.ReadString(section, key, "").empty()) return;
-    warned = true;
-    Log::Line(
-        "WARN: Config key [%s] %s has been retired and is IGNORED. Smoothing is now two "
-        "keys: LocalSmoothing (default 0, applies to a tracker on this machine) and "
-        "RemoteSmoothing (default 0.15, applies to a tracker on the network). The "
-        "old value is not migrated because the semantics changed - it carried a "
-        "hidden 0.15 floor that no longer exists. Set the two new keys.",
-        section, key);
-}
-
-// Reports a value the sanitizer had to change, and returns the sanitized one, so a
-// setting the mod is not honouring never passes silently.
-float ReportIfSanitized(const char* section, const char* key, float raw, float clean) {
-    if (raw != clean) {
-        Log::Line("WARN: INI [%s] %s value %.4f out of range or non-finite; using %.4f",
-                  section, key, raw, clean);
-    }
-    return clean;
-}
-
-// Reads a float that ends up multiplied into the injected viewpoint. strtod accepts
-// "nan" and "inf", and either one propagates from here into the rotation or the camera
-// location and leaves the player with a black screen and nothing in the log. Magnitude
-// and sign are NOT checked: a sensitivity above 1, a negative one, or a limit the
-// player has widened are all legitimate tuning.
-float ReadFinite(const cameraunlock::IniReader& ini, const char* section, const char* key,
-                 float fallback) {
-    const float raw = ini.ReadFloat(section, key, fallback);
-    return ReportIfSanitized(section, key, raw, SanitizeFinite(raw, fallback));
-}
-
-// A positional limit is additionally required to be above zero: a negative one inverts
-// the processor's clamp and pins the camera at a constant offset. See config_sanitize.h.
-float ReadLimit(const cameraunlock::IniReader& ini, const char* key, float fallback) {
-    const float raw = ini.ReadFloat("Position", key, fallback);
-    return ReportIfSanitized("Position", key, raw, SanitizePositiveLimit(raw, fallback));
-}
-
-// Smoothing is additionally clamped to [0,1], the whole domain the settle speed is
-// mapped from. See config_sanitize.h.
-float ReadSmoothing(const cameraunlock::IniReader& ini, const char* key, float fallback) {
-    const float raw = ini.ReadFloat("Smoothing", key, fallback);
-    return ReportIfSanitized("Smoothing", key, raw, SanitizeSmoothing(raw, fallback));
-}
-
-// Returns false on a port outside the bindable range, which is the one config error
-// the mod refuses to start on: every other bad value has a usable fallback.
-bool ReadGeneralSection(Config& cfg, const cameraunlock::IniReader& ini) {
-    cfg.enabled_on_startup = ini.ReadBool("General", "EnableOnStartup", kDefaultEnableOnStartup);
-    const int port = ini.ReadInt("General", "Port", kDefaultPort);
-    if (port < kMinPort || port > kMaxPort) {
-        Log::Line("ERROR: INI port %d out of range %d-%d", port, kMinPort, kMaxPort);
-        return false;
-    }
-    cfg.udp_port = static_cast<uint16_t>(port);
-    cfg.world_space_yaw = ini.ReadBool("General", "WorldSpaceYaw", kDefaultWorldSpaceYaw);
-    cfg.move_crosshair = ini.ReadBool("General", "MoveCrosshair", kDefaultMoveCrosshair);
-    return true;
-}
-
-void ReadCameraSection(Config& cfg, const cameraunlock::IniReader& ini) {
-    const float rawFov = ini.ReadFloat("Camera", "Fov", kDefaultFov);
-    if (rawFov != kDefaultFov && !IsUsableFov(rawFov)) {
-        Log::Line("WARN: INI Camera.Fov value %.1f is not 0 or within %.0f-%.0f degrees; "
-                  "keeping the game's own field of view",
-                  rawFov, kMinFovDegrees, kMaxFovDegrees);
-        cfg.fov = kDefaultFov;
-        return;
-    }
-    cfg.fov = rawFov;
-}
-
-void ReadSensitivitySection(Config& cfg, const cameraunlock::IniReader& ini) {
-    cfg.sens_yaw   = ReadFinite(ini, "Sensitivity", "Yaw",   kDefaultSensitivity);
-    cfg.sens_pitch = ReadFinite(ini, "Sensitivity", "Pitch", kDefaultSensitivity);
-    cfg.sens_roll  = ReadFinite(ini, "Sensitivity", "Roll",  kDefaultSensitivity);
-    cfg.invert_yaw   = ini.ReadBool("Sensitivity", "InvertYaw",   kDefaultInvert);
-    cfg.invert_pitch = ini.ReadBool("Sensitivity", "InvertPitch", kDefaultInvert);
-    cfg.invert_roll  = ini.ReadBool("Sensitivity", "InvertRoll",  kDefaultInvert);
-}
-
-void ReadSmoothingSection(Config& cfg, const cameraunlock::IniReader& ini) {
-    cfg.local_smoothing  = ReadSmoothing(ini, "LocalSmoothing",  kDefaultLocalSmoothing);
-    cfg.remote_smoothing = ReadSmoothing(ini, "RemoteSmoothing", kDefaultRemoteSmoothing);
-
-    WarnRetiredSmoothingKey(ini, "Smoothing", "Smoothing");
-    WarnRetiredSmoothingKey(ini, "Position", "Smoothing");
-}
-
-void ReadPositionSection(Config& cfg, const cameraunlock::IniReader& ini) {
-    cfg.position_enabled = ini.ReadBool("Position", "Enabled", kDefaultPositionEnabled);
-    cfg.pos_sens_x = ReadFinite(ini, "Position", "SensitivityX", kDefaultPosSens);
-    cfg.pos_sens_y = ReadFinite(ini, "Position", "SensitivityY", kDefaultPosSens);
-    cfg.pos_sens_z = ReadFinite(ini, "Position", "SensitivityZ", kDefaultPosSens);
-    cfg.pos_limit_x = ReadLimit(ini, "LimitX", kDefaultPosLimitX);
-    cfg.pos_limit_y = ReadLimit(ini, "LimitY", kDefaultPosLimitY);
-    cfg.pos_limit_z = ReadLimit(ini, "LimitZ", kDefaultPosLimitZ);
-    cfg.pos_limit_z_back = ReadLimit(ini, "LimitZBack", kDefaultPosLimitZBack);
-    // PositionScale multiplies the clamped lean straight into the camera location, so a
-    // non-finite one reaches the viewpoint even with every limit intact.
-    cfg.position_scale = ReadFinite(ini, "Position", "PositionScale", kDefaultPositionScale);
-    cfg.invert_pos_x = ini.ReadBool("Position", "InvertX", kDefaultInvert);
-    cfg.invert_pos_y = ini.ReadBool("Position", "InvertY", kDefaultInvert);
-    cfg.invert_pos_z = ini.ReadBool("Position", "InvertZ", kDefaultInvert);
-}
-
-void ReadCollisionSection(Config& cfg, const cameraunlock::IniReader& ini) {
-    cfg.collision_enabled = ini.ReadBool("Collision", "Enabled", kDefaultCollision);
-    // A zero or negative margin puts the camera exactly on the surface it hit, where the
-    // near clip plane renders straight through it - the clamp would then look broken
-    // rather than absent. Sanitized like a positional limit for the same reason.
-    const float raw = ini.ReadFloat("Collision", "Margin", kDefaultCollisionMargin);
-    cfg.collision_margin =
-        ReportIfSanitized("Collision", "Margin", raw,
-                          SanitizePositiveLimit(raw, kDefaultCollisionMargin));
-}
-
-// A rebind the poller cannot act on is the worst kind of config error: the key simply
-// never fires, and the log says the binding was accepted. GetAsyncKeyState takes a
-// virtual-key code in [1, 254] and answers 0 for anything else, so `Toggle=0x1234` or
-// a mistyped `Toggle=0` disables the hotkey with no diagnostic at all. Report the
-// rejection and fall back to the documented default.
-int ReadVirtualKey(const cameraunlock::IniReader& ini, const char* key, int fallback) {
-    const int raw = ini.ReadHex("Hotkeys", key, fallback);
-    if (cameraunlock::input::IsValidHotkeyCode(raw)) {
-        return raw;
-    }
-    Log::Line("WARN: INI [Hotkeys] %s value 0x%02X is not a usable virtual-key code; "
-              "using the default 0x%02X", key, raw, fallback);
-    return fallback;
-}
-
-void ReadHotkeysSection(Config& cfg, const cameraunlock::IniReader& ini) {
-    cfg.vk_toggle     = ReadVirtualKey(ini, "Toggle",    kDefaultVkToggle);
-    cfg.vk_cycle_mode = ReadVirtualKey(ini, "CycleMode", kDefaultVkCycleMode);
-    cfg.vk_yaw_mode   = ReadVirtualKey(ini, "YawMode",   kDefaultVkYawMode);
-    cfg.chord_toggle     = ini.ReadBool("Hotkeys", "ChordToggle",    kDefaultChord);
-    cfg.chord_cycle_mode = ini.ReadBool("Hotkeys", "ChordCycleMode", kDefaultChord);
-    cfg.chord_yaw_mode   = ini.ReadBool("Hotkeys", "ChordYawMode",   kDefaultChord);
-}
-
 }
 
 bool Config::LoadOrCreate(const char* iniPath) {
@@ -311,21 +154,49 @@ bool Config::LoadOrCreate(const char* iniPath) {
         return false;
     }
 
-    cameraunlock::IniReader ini;
-    if (!ini.Open(iniPath)) {
+    legacy::Config frozen;
+    const legacy::ReadResult read = frozen.Read(iniPath);
+    if (read.status == legacy::ReadStatus::Absent) {
         Log::Line("ERROR: Failed to open INI: %s", iniPath);
         return false;
     }
-
-    if (!ReadGeneralSection(*this, ini)) {
+    if (read.status == legacy::ReadStatus::Refused) {
         return false;
     }
-    ReadCameraSection(*this, ini);
-    ReadSensitivitySection(*this, ini);
-    ReadSmoothingSection(*this, ini);
-    ReadPositionSection(*this, ini);
-    ReadCollisionSection(*this, ini);
-    ReadHotkeysSection(*this, ini);
+
+    enabled_on_startup = frozen.enabled_on_startup;
+    udp_port = frozen.udp_port;
+    sens_yaw = frozen.sens_yaw;
+    sens_pitch = frozen.sens_pitch;
+    sens_roll = frozen.sens_roll;
+    invert_yaw = frozen.invert_yaw;
+    invert_pitch = frozen.invert_pitch;
+    invert_roll = frozen.invert_roll;
+    local_smoothing = frozen.local_smoothing;
+    remote_smoothing = frozen.remote_smoothing;
+    move_crosshair = frozen.move_crosshair;
+    world_space_yaw = frozen.world_space_yaw;
+    fov = frozen.fov;
+    position_enabled = frozen.position_enabled;
+    pos_sens_x = frozen.pos_sens_x;
+    pos_sens_y = frozen.pos_sens_y;
+    pos_sens_z = frozen.pos_sens_z;
+    pos_limit_x = frozen.pos_limit_x;
+    pos_limit_y = frozen.pos_limit_y;
+    pos_limit_z = frozen.pos_limit_z;
+    pos_limit_z_back = frozen.pos_limit_z_back;
+    invert_pos_x = frozen.invert_pos_x;
+    invert_pos_y = frozen.invert_pos_y;
+    invert_pos_z = frozen.invert_pos_z;
+    position_scale = frozen.position_scale;
+    collision_enabled = frozen.collision_enabled;
+    collision_margin = frozen.collision_margin;
+    vk_toggle = frozen.vk_toggle;
+    vk_cycle_mode = frozen.vk_cycle_mode;
+    vk_yaw_mode = frozen.vk_yaw_mode;
+    chord_toggle = frozen.chord_toggle;
+    chord_cycle_mode = frozen.chord_cycle_mode;
+    chord_yaw_mode = frozen.chord_yaw_mode;
     return true;
 }
 

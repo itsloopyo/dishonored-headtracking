@@ -1,0 +1,40 @@
+# What the config differential test compiles, and where each file came from.
+# scripts/run-tests.ps1 fails when a listed file no longer has its hash.
+#
+# Newest published build: the rolling 'dev' pre-release, tag dev at 5f2df02, pinned to
+# cameraunlock-core e43a844. No v* release was published, and the installer ZIP carried
+# no config and no launcher seed, so the build's first run is the only shipped file.
+#
+# Oracle: copies of 'git show dev:<path>' and of cameraunlock-core
+# 'git show e43a844:cpp/<path>'.
+9a2f48fcb0ed5c268a259f3c97354935b62e9d87ebe0eb3da8296df5b4b93e61  tests/config_differential/oracle/src/config.cpp  dev:src/config.cpp
+95d0dbe7233fccd6d68ff1973ced65d553989b963aa51fc34264dcc920911907  tests/config_differential/oracle/src/config.h  dev:src/config.h
+a89b583e46379097e1fcd76bc24617b9e8e7dac650190056755f5890f8db9779  tests/config_differential/oracle/src/config_sanitize.h  dev:src/config_sanitize.h
+c26ad03dad00632083f7b2d8fa2f2fd78fd7339f311080f4c7c6ffe652f66a7d  tests/config_differential/oracle/src/fov_range.h  dev:src/fov_range.h
+cddf98ff3f8e75f5e97e5abfa79fced1ac1f50c4ca9c1b18c91c0c441ed9a438  tests/config_differential/oracle/src/hotkeys.cpp  dev:src/hotkeys.cpp
+237c90559591e93baaad51a06c3a5af8ba8269ebd5466f8adf981412a0199a2e  tests/config_differential/oracle/src/hotkeys.h  dev:src/hotkeys.h
+5164c1f57d500aef02ceb5e2c53a637bdb69eff8b9e95fa2e0d69ce7b73d5f74  tests/config_differential/oracle/src/logging.h  dev:src/logging.h
+a7ffb44210ff59672fa97e8e5feaa2cb3e81938fcc0334a384c68bc371b3857a  tests/config_differential/oracle/core/include/cameraunlock/config/ini_reader.h  core e43a844:cpp/include/cameraunlock/config/ini_reader.h
+b24dceb8e25475aebc5a468a5c7362a4a4e64204d183d1408525345f32f547f5  tests/config_differential/oracle/core/include/cameraunlock/data/position_settings.h  core e43a844:cpp/include/cameraunlock/data/position_settings.h
+de519d9b49c949353c550b9dda347380cbbf131f6768378f8a9f5fd97678fea8  tests/config_differential/oracle/core/include/cameraunlock/input/chord_hotkeys.h  core e43a844:cpp/include/cameraunlock/input/chord_hotkeys.h
+dc1d6e72816599d3538408f95d157c08980749496047b7b2a84bc7285ee05aba  tests/config_differential/oracle/core/include/cameraunlock/input/hotkey_poller.h  core e43a844:cpp/include/cameraunlock/input/hotkey_poller.h
+43bdd2ef8554c78e5f440333463750c13b95110fe672b0b6e273244df9e7d169  tests/config_differential/oracle/core/include/cameraunlock/logging/file_log.h  core e43a844:cpp/include/cameraunlock/logging/file_log.h
+d7a905270933e3cb0c4c361d29d3fd701655498cbcd1875ea79d180468bdbe6a  tests/config_differential/oracle/core/include/cameraunlock/math/angle_utils.h  core e43a844:cpp/include/cameraunlock/math/angle_utils.h
+fc2146f8c585e5f610c7234e302f59de4945679cfa28ff479ca47477ec073f22  tests/config_differential/oracle/core/include/cameraunlock/math/smoothing_utils.h  core e43a844:cpp/include/cameraunlock/math/smoothing_utils.h
+e01515c2656aaf533bae4350dc45b702c3e3d4043935743dcc9bd5ea581fbe1c  tests/config_differential/oracle/core/src/config/ini_reader.cpp  core e43a844:cpp/src/config/ini_reader.cpp
+704e39dab087307477472a75986c619638bf792116a7890d005d717f4d1a0af3  tests/config_differential/oracle/core/src/input/hotkey_poller.cpp  core e43a844:cpp/src/input/hotkey_poller.cpp
+73c53c2baa06bbfebe8211f62678aa2b60cb95f604743d3686951ba56b87ea47  tests/config_differential/oracle/core/src/logging/file_log.cpp  core e43a844:cpp/src/logging/file_log.cpp
+#
+# The first-run output of the dev build, extracted once from the oracle.
+f433047a675bdfd15979939f1e1d6c8957fb1c7dd51f59a9ab4070bbe0f56594  tests/config_differential/data/dev-first-run.ini  dev first run
+#
+# The frozen import. Never edited once the conversion landed.
+8cffc2de48774a52b3cd6155784962796f61ebc6a988e47fbbf11f2cad761b7e  src/legacy_config/legacy_config.h  frozen import
+016e1d3293eee5a0adb6a840cd32dbcc12890a8de4afe9c2a52de212fac39e9a  src/legacy_config/legacy_config.cpp  frozen import
+7e6804e3ac03ba6049851d27ab48c6565c6c420e27247ef9cc44685c64abb7b9  src/legacy_config/config_sanitize.h  frozen import
+#
+# The core sources the import compiles. IniReader is frozen in core, and its two files
+# equal e43a844's, so the import reads a file with the helpers the published build had.
+# Everything else the published reader took from core is copied into the frozen import.
+a7ffb44210ff59672fa97e8e5feaa2cb3e81938fcc0334a384c68bc371b3857a  cameraunlock-core/cpp/include/cameraunlock/config/ini_reader.h  core e43a844:cpp/include/cameraunlock/config/ini_reader.h
+e01515c2656aaf533bae4350dc45b702c3e3d4043935743dcc9bd5ea581fbe1c  cameraunlock-core/cpp/src/config/ini_reader.cpp  core e43a844:cpp/src/config/ini_reader.cpp
