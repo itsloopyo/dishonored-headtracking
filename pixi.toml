@@ -67,4 +67,6 @@ update-deps = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/update-d
 strip-loader = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/strip-loader-payload.ps1 -Path vendor/ultimate-asi-loader/dinput8.dll" }
 
 [dependencies]
-# No pixi dependencies - using system CMake and Visual Studio 2022.
+# CMake and Visual Studio come from the system. Packaging, validate-manifest,
+# render-config and the config lint run node.
+nodejs = "==26.5.0"
