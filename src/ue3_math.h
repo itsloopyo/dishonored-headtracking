@@ -29,6 +29,10 @@ constexpr float kDegToRad   = static_cast<float>(cameraunlock::math::kPi / 180.0
 // back, so the sum has to be clamped.
 constexpr std::int32_t kMaxPitchUnits = 16384;
 
+// UE3 world units are centimetres and the tracker reports metres, so a lean converts at this
+// scale at the engine boundary.
+constexpr float kWorldUnitsPerMetre = 100.0f;
+
 // An FRotator field reduced to the signed half-turn range [-32768, 32767].
 //
 // A rotator is modular, so the engine is free to hand back either representation and

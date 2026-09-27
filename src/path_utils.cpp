@@ -5,6 +5,8 @@
 
 #include <windows.h>
 
+#include <cstddef>
+
 namespace DishonoredHeadTracking {
 
 namespace {
@@ -44,9 +46,8 @@ std::basic_string<Char> DirectoryOf(const Char* path, size_t length) {
     return full.substr(0, lastSlash + 1);
 }
 
-// The directory this DLL was loaded from, read WIDE. Every path this file produces is
-// derived from this one: reading it narrow first and converting afterwards is what loses
-// the characters (see GetModulePathW).
+// The directory this DLL was loaded from, read WIDE: reading it narrow first and converting
+// afterwards is what loses the characters (see GetModulePathW).
 std::wstring ModuleDirectoryW() {
     HMODULE hModule = SelfModule();
     if (!hModule) {
@@ -92,25 +93,26 @@ std::string ToAnsiLossless(const std::wstring& wide) {
     return narrow;
 }
 
-}  // namespace
+// The same question asked of a path this file BUILDS rather than reads: the ANSI file APIs
+// the legacy reader opens it with take no long path without a manifest opt-in this module
+// does not have.
+bool FitsMaxPath(size_t length) {
+    return length + 1 <= MAX_PATH;
+}
 
-std::string GetModuleDirectory() {
-    const std::wstring wideDir = ModuleDirectoryW();
-    if (wideDir.empty()) {
-        return {};
-    }
-
+// The folder of @p wideDir as an ANSI path, by the rule the pre-canonical builds opened the
+// INI through: the path itself where the ANSI codepage holds every character of it, else
+// the 8.3 short name. Empty when neither works.
+std::string AnsiDirectory(const std::wstring& wideDir) {
     // The common case: the install path is representable, so use it as it is.
     std::string ansi = ToAnsiLossless(wideDir);
     if (!ansi.empty()) {
         return ansi;
     }
 
-    // It is not. The INI goes through cameraunlock-core's IniReader/IniWriter, which are
-    // ANSI throughout (GetPrivateProfileStringA, fopen), so a wide path cannot be handed
-    // to them - and a lossy narrow one resolves to a directory that does not exist, which
-    // is how a game installed under a non-ASCII path got "the game directory is not
-    // writable by this account" and no config at all.
+    // It is not. The legacy reader opens the INI through the ANSI profile API, so a wide
+    // path cannot be handed to it - and a lossy narrow one resolves to a directory that does
+    // not exist.
     //
     // The 8.3 short name is the documented way out: it is ASCII by construction. It is
     // taken of the DIRECTORY, which exists, rather than of the INI, which may not yet.
@@ -128,22 +130,34 @@ std::string GetModuleDirectory() {
     }
 
     // Short-name generation can be disabled per volume, in which case this hands back the
-    // long name unchanged and the conversion fails again. Failing closed is the point:
-    // the caller reports it, rather than writing the config somewhere the player is not
-    // looking.
+    // long name unchanged and the conversion fails again.
     return ToAnsiLossless(shortened);
 }
 
-std::string GetModulePath(const char* filename) {
-    std::string dir = GetModuleDirectory();
+}  // namespace
+
+std::string LegacyAnsiPath(const std::wstring& path) {
+    const std::wstring dir = DirectoryOf(path.c_str(), path.size());
     if (dir.empty()) {
-        // Fail closed, like the wide variant below. Returning the bare filename resolved
-        // it against the process working directory, so the INI was created and read
-        // somewhere the player never looks: their edits next to dinput8.dll were ignored
-        // while the log reported the config as loaded.
         return {};
     }
-    return dir + filename;
+    const std::string ansiDir = AnsiDirectory(dir);
+    if (ansiDir.empty()) {
+        return {};
+    }
+    // The file name is the ASCII kLegacyConfigFileName, so narrowing it is a byte-for-byte copy.
+    std::string ansi = ansiDir;
+    for (std::size_t i = dir.size(); i < path.size(); ++i) {
+        ansi.push_back(static_cast<char>(path[i]));
+    }
+    if (!FitsMaxPath(ansi.size())) {
+        return {};
+    }
+    return ansi;
+}
+
+std::wstring GetModuleDirectoryW() {
+    return ModuleDirectoryW();
 }
 
 std::wstring GetModulePathW(const char* filename) {

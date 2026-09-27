@@ -6,37 +6,16 @@
 #include "logging.h"
 #include "ue3_math.h"
 
+#include "cameraunlock/tracking/tracking_mode.h"
+
+#include <cstdint>
+
 namespace DishonoredHeadTracking {
 
-void TrackingRuntime::ConfigureRotation() {
-    cameraunlock::SensitivitySettings sens;
-    sens.yaw = m_cfg.sens_yaw;
-    sens.pitch = m_cfg.sens_pitch;
-    sens.roll = m_cfg.sens_roll;
-    sens.invert_yaw = m_cfg.invert_yaw;
-    sens.invert_pitch = m_cfg.invert_pitch;
-    sens.invert_roll = m_cfg.invert_roll;
-    m_session.GetProcessor().SetSensitivity(sens);
-}
-
 void TrackingRuntime::ConfigurePosition() {
-    cameraunlock::PositionSettings pos;
-    pos.sensitivity_x = m_cfg.pos_sens_x;
-    pos.sensitivity_y = m_cfg.pos_sens_y;
-    pos.sensitivity_z = m_cfg.pos_sens_z;
-    pos.limit_x = m_cfg.pos_limit_x;
-    pos.limit_y = m_cfg.pos_limit_y;
-    // The INI exposes one vertical limit, so mirror it into the downward bound the way
-    // PositionSettings::Symmetric does. Leaving limit_y_down at its struct default made
-    // a raised LimitY grow the upward budget only, silently and with nothing in the INI
-    // to explain the asymmetry.
-    pos.limit_y_down = m_cfg.pos_limit_y;
-    pos.limit_z = m_cfg.pos_limit_z;
-    pos.limit_z_back = m_cfg.pos_limit_z_back;
-    pos.invert_x = m_cfg.invert_pos_x;
-    pos.invert_y = m_cfg.invert_pos_y;
-    pos.invert_z = m_cfg.invert_pos_z;
-    m_session.GetPositionProcessor().SetSettings(pos);
+    // The limits and the smoothing copies come from the config; the sensitivities and
+    // inversions stay at the identity PositionSettings starts with.
+    m_session.GetPositionProcessor().SetSettings(m_cfg.position);
 }
 
 void TrackingRuntime::ConfigureSmoothing() {
@@ -54,24 +33,25 @@ void TrackingRuntime::ConfigureSmoothing() {
 void TrackingRuntime::Start(const Config& cfg) {
     m_cfg = cfg;
 
-    ConfigureRotation();
     ConfigurePosition();
     ConfigureSmoothing();
 
-    m_enabled.store(m_cfg.enabled_on_startup, std::memory_order_relaxed);
+    m_enabled.store(m_cfg.enable_on_startup, std::memory_order_relaxed);
     m_worldSpaceYaw.store(m_cfg.world_space_yaw, std::memory_order_relaxed);
-    m_session.SetMode(m_cfg.position_enabled
-                          ? cameraunlock::TrackingMode::RotationAndPosition
-                          : cameraunlock::TrackingMode::RotationOnly);
+    // The table never loads a pair that names no mode: it reads both as their defaults
+    // instead.
+    m_session.SetMode(
+        cameraunlock::DecodeTrackingMode(m_cfg.rotation_enabled, m_cfg.position_enabled).value());
 
     m_receiver.SetLog([](const std::string& msg) {
         Log::Line("UDP: %s", msg.c_str());
     });
 
-    if (m_receiver.Start(m_cfg.udp_port)) {
-        Log::Line("UDP receiver listening on port %u", m_cfg.udp_port);
+    const auto port = static_cast<std::uint16_t>(m_cfg.udp_port);
+    if (m_receiver.Start(port)) {
+        Log::Line("UDP receiver listening on port %u", port);
     } else {
-        Log::Line("WARN: UDP receiver did not bind immediately on port %u; background retry active", m_cfg.udp_port);
+        Log::Line("WARN: UDP receiver did not bind immediately on port %u; background retry active", port);
     }
 }
 
@@ -85,8 +65,9 @@ void TrackingRuntime::ToggleEnabled() {
     Log::Line("Tracking %s", !prev ? "enabled" : "disabled");
 }
 
-void TrackingRuntime::CycleTrackingMode() {
-    switch (m_session.CycleMode()) {
+cameraunlock::TrackingMode TrackingRuntime::CycleTrackingMode() {
+    const cameraunlock::TrackingMode mode = m_session.CycleMode();
+    switch (mode) {
         case cameraunlock::TrackingMode::RotationAndPosition:
             Log::Line("Tracking mode: rotation + position (6DOF)");
             break;
@@ -97,29 +78,27 @@ void TrackingRuntime::CycleTrackingMode() {
             Log::Line("Tracking mode: position only");
             break;
     }
+    return mode;
 }
 
-void TrackingRuntime::ToggleYawMode() {
+bool TrackingRuntime::ToggleYawMode() {
     bool prev = m_worldSpaceYaw.load(std::memory_order_relaxed);
     m_worldSpaceYaw.store(!prev, std::memory_order_relaxed);
     Log::Line("Yaw mode: %s", !prev ? "world-space (horizon-locked)" : "camera-local");
+    return !prev;
 }
 
-// The pipeline's own finite checks stop at the wire: OpenTrackPacket rejects a
-// non-finite datagram, but the sensitivities the processor multiplies it by come from
-// the INI, where magnitude is deliberately unbounded because a large one is legitimate
-// tuning. A large enough sensitivity overflows the product to infinity, and from here
-// it would reach the FRotator conversion and the camera location. Drop the channel
-// instead, and say so once - a silently dropped pose reads in game exactly like a
-// tracker that has stopped sending.
+// The pipeline's own finite checks stop at the wire: OpenTrackPacket rejects a non-finite
+// datagram, but nothing downstream of it guarantees the processed pose stays finite. From
+// here it would reach the FRotator conversion and the camera location. Drop the channel
+// instead, and say so once - a silently dropped pose reads in game exactly like a tracker
+// that has stopped sending.
 namespace {
 void ReportNonFinite(const char* channel) {
     static bool s_warned = false;
     if (s_warned) return;
     s_warned = true;
-    Log::Line("WARN: the processed %s came out non-finite and is being dropped. Check "
-              "the Sensitivity and Position values in the INI: a large enough one "
-              "overflows the pose it multiplies.", channel);
+    Log::Line("WARN: the processed %s came out non-finite and is being dropped.", channel);
 }
 }  // namespace
 

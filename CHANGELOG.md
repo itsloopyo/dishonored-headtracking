@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Settings move to `Binaries\Win32\CameraUnlock.ini`. Earlier versions of the mod kept these settings in `DishonoredHeadTracking.ini`, in the same folder. The first time this version starts and finds no `CameraUnlock.ini`, it reads your settings from `DishonoredHeadTracking.ini` and writes them into `CameraUnlock.ini`. It never changes `DishonoredHeadTracking.ini`, and does not read it again while `CameraUnlock.ini` exists.
+- A setting that the defaults the README shows set to `default` is written as `default` when you never changed it from the default earlier versions used, because `DishonoredHeadTracking.ini` does not hold it or holds that default. It then follows `Defaults.ini`, so it takes the value `Defaults.ini` gives it, or the built-in value where `Defaults.ini` gives none, which can differ from the default earlier versions used. A setting you changed is written with the value imported for it, or as `default` where that value equals its default at that start.
+- `RotationEnabled` and `PositionEnabled` are one setting here, the tracking mode, so both are written as `default` or neither is.
+- Comments, and keys the mod never read, are not carried over. Nor are these, where your old file had them:
+  - A sensitivity, scale or axis inversion you changed from its default. Set these in your tracker instead.
+  - `[General] MoveCrosshair`. The game's crosshair always follows the aim now.
+- An older version of the mod reads `DishonoredHeadTracking.ini` and never reads `CameraUnlock.ini`, so a setting you change after updating is not in `DishonoredHeadTracking.ini`.
+- Deleting only `CameraUnlock.ini` makes the next start read `DishonoredHeadTracking.ini` again. To go back to the defaults, replace everything in `CameraUnlock.ini` with the defaults the README shows. Every setting they set to `default` then follows `Defaults.ini`.
+- Hotkeys are written as key names, and each hotkey lists every key that triggers it, the Ctrl+Shift chord included: `ToggleKey=End, Ctrl+Shift+Y`. The import carries over each key you had bound and each chord you had switched on or off, and now each one can be changed or removed like any other key.
+- Settings are renamed in `CameraUnlock.ini`: `[General] Port` is `[Network] UdpPort`; the `[Position]` limits are `PositionLimitX`, `PositionLimitY`, `PositionLimitYDown`, `PositionLimitZ` and `PositionLimitZBack`; `[Collision] Enabled` and `Margin` are `[Position] CollisionEnabled` and `CollisionMargin`; and `[Hotkeys] Toggle`, `CycleMode` and `YawMode` with `ChordToggle`, `ChordCycleMode` and `ChordYawMode` are `ToggleKey`, `CycleTrackingModeKey` and `YawModeKey`. `LimitY` bounded both directions, so it becomes both `PositionLimitY` and `PositionLimitYDown`, which can now be set apart. `[Position] Enabled` chose the tracking mode at startup; that is now the pair `RotationEnabled` and `PositionEnabled`. `[Camera] Fov` keeps its name. The import carries every one of these values over.
+- The tracking mode that Page Up or Ctrl+Shift+G selects, and the yaw mode that Page Down or Ctrl+Shift+H selects, are now saved to `CameraUnlock.ini` as soon as you change them and come back at the next start. End still changes the current session only.
+- `uninstall.cmd` keeps `Binaries\Win32\CameraUnlock.ini` and `Binaries\Win32\DishonoredHeadTracking.ini`, so your settings survive a reinstall.
+- A `DishonoredHeadTracking.ini` whose position limits include one above 10 is not imported, because `CameraUnlock.ini` cannot hold that value. The mod runs on the file's values with the same exceptions as an imported file: a sensitivity, scale or inversion you changed is not applied, and the game's crosshair follows the aim. It creates no `CameraUnlock.ini`, saves nothing that session, and says so in the log at every start until the value is fixed.
+- A `DishonoredHeadTracking.ini` that earlier versions refused to start with, a `[General] Port` outside 1024 to 65535, or a game folder whose path neither the ANSI code page nor an 8.3 short name can spell within 260 characters, is not imported either, and this version does not start until it is fixed, as earlier versions did not. A `UdpPort` in `CameraUnlock.ini` takes any port from 1 to 65535.
+- When `CameraUnlock.ini` cannot be created, for example because `Binaries\Win32` cannot be written, the mod runs on the settings it read from `DishonoredHeadTracking.ini`, or on its defaults where there is none, saves nothing that session, and tries again at the next start. Earlier versions did not start at all when there was no `DishonoredHeadTracking.ini` and they could not create one.
+
+### Added
+
+- A setting set to `default` in `CameraUnlock.ini` takes its value from `Defaults.ini`, which every head tracking mod that keeps its settings in `CameraUnlock.ini` reads. Head tracking mods that keep their settings in another file do not read it, and neither do earlier versions of this mod. Writing a value in place of `default` changes that setting for this game only. When the mod saves a setting that a hotkey changed in game, it writes the new value in place of `default`, so that setting no longer follows `Defaults.ini` in this game until you set it to `default` again.
+- `Defaults.ini` is `%AppData%\CameraUnlock\Defaults.ini` on Windows; `$XDG_CONFIG_HOME/CameraUnlock/Defaults.ini` on Linux, or `~/.config/CameraUnlock/Defaults.ini` where `XDG_CONFIG_HOME` is not set, under Wine and Proton too; and `~/Library/Application Support/CameraUnlock/Defaults.ini` on macOS. The mod's log, where it writes one, names the file it read.
+- When the mod starts and finds no `Defaults.ini`, it creates one holding the built-in values, unless Windows runs the game as a packaged app. The mod never changes `Defaults.ini` after that.
+
+### Removed
+
+- `[General] MoveCrosshair`. The game's crosshair always follows the aim now, and no setting turns that off.
+- The sensitivity, scale and axis inversion settings (`[Sensitivity]`, and `[Position]` `SensitivityX/Y/Z`, `PositionScale` and `InvertX/Y/Z`). Set these in your tracker app instead.
+- With these settings at their shipped defaults the camera moves as it did before.
+
 ### Fixed
 - A zoom no longer amplifies head tracking. When the game narrows the field of view for a
   scripted scene, the same head turn used to sweep the view much further than it does in

@@ -130,123 +130,130 @@ Two equivalent binding sets - use whichever your keyboard has:
 | Cycle tracking mode | `Page Up`   | `Ctrl+Shift+G` |
 | Toggle yaw mode     | `Page Down` | `Ctrl+Shift+H` |
 
-`Page Up` / `Ctrl+Shift+G` cycles tracking mode:
+`Page Up` / `Ctrl+Shift+G` cycles tracking mode: full tracking, then rotation only, then position only, then back to full.
 
-1. Normal head-tracked gameplay
-2. Positional tracking disabled, rotational tracking enabled
-3. Rotational tracking disabled, positional tracking enabled
-4. Back to normal
+`Page Down` / `Ctrl+Shift+H` switches head yaw between horizon-locked and camera-local. Horizon-locked is the default and keeps "up" where it is however the mouse is pitched.
+
+The tracking mode and the yaw mode are saved to `CameraUnlock.ini` as soon as you change them, and come back at the next start. `End` / `Ctrl+Shift+Y` changes the current session only: whether tracking is on at startup is `EnableOnStartup`.
+
+Each action's keys are a list in the `[Hotkeys]` section of `CameraUnlock.ini`, the chord included, so any of them can be rebound or removed.
+
+The mod draws no text of its own, so a mode you switch to is named in `HeadTracking.log` rather than on screen.
 
 ## Configuration
 
-The config file is generated on first run next to `dinput8.dll` at
-`Binaries/Win32/DishonoredHeadTracking.ini`. This is exactly what it contains:
+Apart from creating `CameraUnlock.ini` at startup when there is none, the mod writes to it only when a hotkey changes the tracking mode or the yaw mode. It never writes `DishonoredHeadTracking.ini`, and it creates `Defaults.ini` only when there is none and never changes it. Edit `CameraUnlock.ini` with the game closed.
+
+<!-- cameraunlock:config -->
+The mod reads its settings from `Binaries\Win32\CameraUnlock.ini` in the game folder, and creates the file when it starts and finds none. Edit it with any text editor.
+
+A setting set to `default` takes its value from `Defaults.ini`, which every head tracking mod that keeps its settings in `CameraUnlock.ini` reads. Head tracking mods that keep their settings in another file do not read it. Writing a value in place of `default` changes that setting for this game only. When the mod saves a setting that a hotkey changed in game, it writes the new value in place of `default`, so that setting no longer follows `Defaults.ini` in this game until you set it to `default` again.
+
+`Defaults.ini` is `%AppData%\CameraUnlock\Defaults.ini` on Windows; `$XDG_CONFIG_HOME/CameraUnlock/Defaults.ini` on Linux, or `~/.config/CameraUnlock/Defaults.ini` where `XDG_CONFIG_HOME` is not set, under Wine and Proton too; and `~/Library/Application Support/CameraUnlock/Defaults.ini` on macOS. The mod's log, where it writes one, names the file it read.
+
+When the mod starts and finds no `Defaults.ini`, it creates one holding the built-in values, unless Windows runs the game as a packaged app. The mod never changes `Defaults.ini` after that. Edit it with any text editor.
+
+The built-in value of each setting set to `default` below:
+
+- `UdpPort=4242`
+- `EnableOnStartup=true`
+- `WorldSpaceYaw=true`
+- `RotationEnabled=true`
+- `LocalSmoothing=0.0`
+- `RemoteSmoothing=0.15`
+- `PositionEnabled=true`
+- `PositionLimitX=0.3`
+- `PositionLimitY=0.2`
+- `PositionLimitYDown=0.2`
+- `PositionLimitZ=0.4`
+- `PositionLimitZBack=0.1`
+- `CollisionEnabled=true`
+- `ToggleKey=End, Ctrl+Shift+Y`
+- `CycleTrackingModeKey=PageUp, Ctrl+Shift+G`
+- `YawModeKey=PageDown, Ctrl+Shift+H`
+
+With every setting at its default, the file reads:
 
 ```ini
-; Dishonored - Head Tracking configuration
-; Lives next to dinput8.dll in Binaries/Win32/.
+; Dishonored head tracking settings.
+; Comments start with ; and go on their own line. Text after a value is part of the value.
+; Hotkeys are key names such as End, PageUp or Ctrl+Shift+Y. Separate several with commas; leave empty for none.
+; A setting set to default takes its value from Defaults.ini, which every head tracking mod
+; that keeps its settings in CameraUnlock.ini reads: %AppData%\CameraUnlock\Defaults.ini on
+; Windows, $XDG_CONFIG_HOME/CameraUnlock/Defaults.ini (normally ~/.config/CameraUnlock) on
+; Linux, under Wine and Proton too, and ~/Library/Application Support/CameraUnlock/Defaults.ini
+; on macOS. The log names the file it read. Write a value instead of default to change that
+; setting for this game only.
+
+[CameraUnlock]
+; Written by the mod. Leave this section in place.
+ConfigFormat=1
+
+[Network]
+; UDP port the mod receives tracker data on (OpenTrack protocol).
+UdpPort=default
 
 [General]
-EnableOnStartup=1
-Port=4242
-; Yaw mode: true = horizon-locked yaw (default), false = camera-local.
-WorldSpaceYaw=1
-; The game draws its crosshair at screen centre; head tracking moves the view
-; away from it. This moves the crosshair to where the game is actually aiming.
-MoveCrosshair=1
-
-[Camera]
-; Horizontal field of view in degrees, at the game's default zoom.
-; 0 keeps the game's own FOV - Dishonored has an FOV slider in Options > Graphics,
-; so set this only to go past what that slider offers.
-; The difference between this and the game's default is added to whatever FOV the
-; game asks for, so weapon zooms still zoom by the same amount, and the crosshair
-; is projected with the value the scene is rendered at.
-Fov=0
-
-[Sensitivity]
-Yaw=1
-Pitch=1
-Roll=1
-; Flip an axis only if your tracker reports it backwards. The engine's own
-; sign conventions are already handled; these three ship off.
-InvertYaw=0
-InvertPitch=0
-InvertRoll=0
+; true: head tracking is on when the game starts. ToggleKey turns it on and off.
+EnableOnStartup=default
+; true: yaw turns around the world's up axis. false: around the camera's own up axis.
+WorldSpaceYaw=default
+; true: turning your head turns the view.
+; Tracking mode at startup, with PositionEnabled. The mode hotkey changes both.
+RotationEnabled=default
 
 [Smoothing]
-; Chosen per connection from the tracker's source address; covers rotation and position.
-; LocalSmoothing: tracker running on this machine (loopback). 0 = none, 1 = heavy.
-LocalSmoothing=0
-; RemoteSmoothing: tracker on a remote network device. 0 = none, 1 = heavy.
-RemoteSmoothing=0.15
+; Smoothing when the tracker runs on this PC. 0 is the least, 1 the most.
+LocalSmoothing=default
+; Smoothing when the tracker is another device on the network, such as a phone.
+; 0 is the least, 1 the most.
+RemoteSmoothing=default
 
 [Position]
-; 6DOF positional tracking. PositionScale = world units (cm) per metre of head translation.
-Enabled=1
-SensitivityX=1
-SensitivityY=1
-SensitivityZ=1
-LimitX=0.3
-LimitY=0.2
-LimitZ=0.4
-LimitZBack=0.1
-PositionScale=100
-; As above: only for a tracker that reports an axis backwards. Leaving these
-; off is what keeps LimitZ on leaning in and LimitZBack on pulling away.
-InvertX=0
-InvertY=0
-InvertZ=0
-
-[Collision]
-; Head tracking moves the camera off the player's eye, so leaning toward a wall
-; can carry the view through it. This traces the lean against the world and
-; stops the camera short of whatever it would have entered.
-Enabled=1
-; World units (cm) kept between the camera and the surface it stopped at.
-; Raise it if you can still see through a wall you lean into; lower it if the
-; camera stops further from walls than you want.
-Margin=20
+; true: moving your head moves the view.
+; Tracking mode at startup, with RotationEnabled. The mode hotkey changes both.
+PositionEnabled=default
+; How far, in metres, leaning left or right can move the view.
+PositionLimitX=default
+; How far, in metres, raising your head can move the view.
+PositionLimitY=default
+; How far, in metres, lowering your head can move the view.
+PositionLimitYDown=default
+; How far, in metres, leaning forward can move the view.
+PositionLimitZ=default
+; How far, in metres, leaning back can move the view.
+PositionLimitZBack=default
+; true: leaning stops at walls instead of moving the view through them.
+CollisionEnabled=default
+; How far, in centimetres, the view is held off a wall when you lean into it.
+CollisionMargin=20.0
 
 [Hotkeys]
-; Virtual-key codes. Defaults: End (toggle), Page Up (cycle tracking mode), Page Down (yaw mode).
-Toggle=0x23
-CycleMode=0x21
-YawMode=0x22
-; Chord alternatives: Ctrl+Shift+Y (toggle), Ctrl+Shift+G (cycle tracking mode), Ctrl+Shift+H (yaw mode).
-ChordToggle=1
-ChordCycleMode=1
-ChordYawMode=1
+; Turns head tracking on and off.
+ToggleKey=default
+; Changes the tracking mode: rotation and position, rotation only, position only.
+CycleTrackingModeKey=default
+; Switches yaw between the world's up axis and the camera's own (WorldSpaceYaw).
+YawModeKey=default
+
+[Camera]
+; Horizontal field of view in degrees at the game's default zoom: 0, or 20 to 170.
+; 0 keeps the game's own FOV - Dishonored has an FOV slider in Options > Graphics,
+; so set this only to go past what that slider offers. The difference between this
+; and the game's default is added to whatever FOV the game asks for, so weapon zooms
+; still zoom by the same amount.
+Fov=0.0
 ```
+<!-- /cameraunlock:config -->
 
-Booleans are written as `1` and `0`; `true` and `false` are also accepted when you
-edit the file. Put a comment on its own line above the key rather than after the
-value: the parser hands the whole text after `=` to the value reader, so a trailing
-`; note` makes a boolean or text setting fall back to its default without saying so.
-
-**Sensitivity and the position limits are not range-checked.** Only NaN and infinity
-are rejected, and the log names any value it had to replace. `1.0` is the shipped
-sensitivity and the tracker is meant to own pose shaping, so reach for OpenTrack's
-own curves before these. A position limit must be greater than zero; a negative one
-is rejected and the default used, because it would invert the clamp and pin the
-camera at a fixed offset instead of widening anything.
-
-**Smoothing is chosen per connection, and only loopback counts as local.** A tracker
-sending to `127.0.0.1` gets `LocalSmoothing`; anything else, including a tracker
-running on this very PC that sends to the machine's own LAN address, is classified
-remote and gets `RemoteSmoothing`. If you point a phone at this PC's LAN IP, that is
-the `RemoteSmoothing` path. At the default `0.15` the pose settles with a 23.5 ms
-time constant, the same at any refresh rate.
-
-`Fov=0` (default) leaves the field of view to the game, which has its own FOV slider in
+`Fov=0.0` (default) leaves the field of view to the game, which has its own FOV slider in
 Options > Graphics. Setting a value renders the scene at that FOV **at the game's default
 zoom**: what the mod applies is the difference between your value and the game's default,
 added to whatever FOV the game asks for, so a weapon zoom still removes the same number of
 degrees it always did. The crosshair is projected with the value the scene is actually
-rendered at, so it keeps marking where the shot lands. Values outside 20-170 degrees are
-ignored and the game's own field of view is kept, with a line in the log saying so. The
-mod changes the FOV the scene is drawn with and nothing else: weapon zooms, camera
-modifiers and everything else that reads the FOV still see the game's own value.
+rendered at, so it keeps marking where the shot lands. `Fov` takes 0 or a value from 20 to
+170 degrees. The mod changes the FOV the scene is drawn with and nothing else: weapon zooms,
+camera modifiers and everything else that reads the FOV still see the game's own value.
 
 **A zoom does not make head tracking stronger.** When the game narrows the field of view -
 a scripted scene, a camera modifier - the same head turn would otherwise sweep the view
@@ -259,18 +266,24 @@ default leaves the head at 1:1 rather than amplifying it. If you set `Fov`, that
 becomes the baseline the zooms are measured against, so your own choice of FOV is never
 treated as a zoom.
 
-`[Collision] Enabled=1` (default) stops a lean from pushing the camera into a wall.
+`CollisionEnabled` (on by default) stops a lean from pushing the camera into a wall.
 Each frame the mod traces the lean it is about to apply against the world's geometry
-and stops the camera `Margin` world units short of the first surface in the way,
+and stops the camera `CollisionMargin` centimetres short of the first surface in the way,
 measured along that surface. It is a hard stop, not a slowdown: keep pushing your head
 forward against a wall and the view holds where it is until you move back. Only the
 rendered camera is affected - the trace reads the world and changes nothing in it, and
 where your shots go is unchanged either way. When whatever you were leaning against
 clears, the view returns to your real head position over about a fifth of a second, so
-stepping out from behind a doorframe mid-lean does not snap. Set `Enabled=0` to turn
-the clamp off entirely.
+stepping out from behind a doorframe mid-lean does not snap.
 
-`WorldSpaceYaw=true` (default) keeps yaw rotating around the world up-axis, so "up" stays gravity-aligned even when you look up or down. Set it to `false` for camera-local yaw, which follows the camera's current up-axis. Toggle it at runtime with `Page Down` or `Ctrl+Shift+H` without restarting.
+**Smoothing is chosen per connection, and only loopback counts as local.** A tracker
+sending to `127.0.0.1` gets `LocalSmoothing`; anything else, including a tracker
+running on this very PC that sends to the machine's own LAN address, is classified
+remote and gets `RemoteSmoothing`. If you point a phone at this PC's LAN IP, that is
+the `RemoteSmoothing` path.
+
+The game's crosshair always follows the aim point, and there is no setting for
+sensitivity, inversion or deadzone: set those in your tracker.
 
 ## Troubleshooting
 
@@ -290,7 +303,7 @@ the clamp off entirely.
 - Close the other game. The mod retries the bind every 500ms on its own, so it takes the port back within about a second and logs `Bound UDP port 4242 after Ns of waiting - tracking is live`. Nothing needs restarting.
 
 **Jittery or unstable tracking**
-- Raise `LocalSmoothing` (tracker on this PC) or `RemoteSmoothing` (tracker on your phone or another network device) toward `1.0` in the INI.
+- Raise `LocalSmoothing` (tracker on this PC) or `RemoteSmoothing` (tracker on your phone or another network device) toward `1.0` in `CameraUnlock.ini`.
 - For wireless or phone trackers, increase smoothing in the tracker app as well.
 
 **Nothing happens, and the log says "Staying dormant"**
@@ -298,21 +311,21 @@ the clamp off entirely.
 - If the log says the exe is "tampered/repacked", the mod will not engage on a modified binary.
 
 **The crosshair sits slightly off where the shot lands when I lean**
-- Expected, and it only affects leaning, not looking. The crosshair follows the aim direction, and positional tracking moves the rendered eye away from the eye the shot leaves from, so the crosshair sits off the impact by roughly your lean divided by the distance to the target. It is largest close up and shrinks with range. Rotation is unaffected. Set `Enabled=0` under `[Position]` if you would rather have no lean at all.
+- Expected, and it only affects leaning, not looking. The crosshair follows the aim direction, and positional tracking moves the rendered eye away from the eye the shot leaves from, so the crosshair sits off the impact by roughly your lean divided by the distance to the target. It is largest close up and shrinks with range. Rotation is unaffected. Cycle to rotation only with `Page Up` / `Ctrl+Shift+G` if you would rather have no lean at all.
 
 **Wrong rotation axis**
-- Set the matching `Invert` flag (`InvertYaw`, `InvertPitch`, or `InvertRoll`) to `1`. These ship off: the engine's own sign conventions are handled inside the mod, so you only need one of these if your tracker itself reports an axis backwards.
+- Invert that axis in your tracker. The engine's own sign conventions are handled inside the mod, so this is only needed if your tracker itself reports an axis backwards.
 
 **Yaw feels wrong when looking up or down at extreme angles**
 - Toggle between world-locked and camera-local yaw with `Page Down` or `Ctrl+Shift+H`. World-locked (default) is horizon-stable; camera-local follows the camera's current up-axis.
 
 ## Updating
 
-Download the new release and run `install.cmd` again. Your config is preserved.
+Download the new release and run `install.cmd` again. Your `CameraUnlock.ini` is preserved.
 
 ## Uninstalling
 
-Run `uninstall.cmd`. This removes the mod's `.asi`. The Ultimate ASI Loader (`dinput8.dll`) is only removed if the installer put it there. Use `uninstall.cmd /force` to remove it anyway.
+Run `uninstall.cmd`. This removes the mod's `.asi` and keeps `CameraUnlock.ini` and `DishonoredHeadTracking.ini`, so a reinstall starts with your settings. The Ultimate ASI Loader (`dinput8.dll`) is only removed if the installer put it there. Use `uninstall.cmd /force` to remove it anyway.
 
 ## Building from Source
 

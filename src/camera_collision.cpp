@@ -118,7 +118,7 @@ void InitCameraCollision(const BuildProfile& profile, std::uintptr_t moduleBase,
         return;
     }
 
-    g_margin = cfg.collision_margin;
+    g_margin = cfg.lean_clamp.skin;
     g_gworld = moduleBase + profile.rvaGWorld;
     g_singleLineCheck = reinterpret_cast<SingleLineCheck_t>(moduleBase +
                                                             profile.rvaSingleLineCheck);

@@ -29,6 +29,14 @@ build-release = { cmd = "cmake --build build --config Release", depends-on = ["s
 # projection logic, and the config differential test against the published build.
 test = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1" }
 
+# Build the test binaries without running them.
+build-tests = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1 -BuildOnly" }
+
+# Rewrite config/CameraUnlock.ini, the committed copy of the CameraUnlock.ini the mod creates at
+# first launch, from the config table after a change to a row, a comment or a default, then
+# rewrite the per_game of launcher-manifest.json's config descriptor from it.
+render-config = { cmd = "build-tests/Debug/config_tests.exe --render-config config/CameraUnlock.ini && node cameraunlock-core/scripts/encode-seed.mjs", depends-on = ["build-tests"] }
+
 # Build + deploy release to every installed copy of the game.
 install = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 Release", depends-on = ["build-release"] }
 
@@ -46,6 +54,10 @@ clean = { cmd = """
 
 # Automated release workflow (version bump, changelog, tag, push).
 release = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/release.ps1" }
+
+# Check the newest installer ZIP's launcher manifest, and that the Nexus ZIP carries no config.
+# Reads the ZIPs already in release/, so package first.
+validate-manifest = { cmd = "node cameraunlock-core/scripts/validate-manifest.mjs" }
 
 # Bump vendored Ultimate ASI Loader to the latest pinned upstream. Manual; commit the result.
 update-deps = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/update-deps.ps1" }

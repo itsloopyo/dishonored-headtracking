@@ -1,5 +1,9 @@
 [CmdletBinding()]
-param([string]$Config = 'Debug')
+param(
+    [string]$Config = 'Debug',
+    # Build the test binaries without running them (pixi run build-tests).
+    [switch]$BuildOnly
+)
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 $BuildDir = Join-Path $ProjectRoot 'build-tests'
@@ -22,6 +26,7 @@ if ($LASTEXITCODE -ne 0) { throw "CMake configure failed ($LASTEXITCODE)" }
 
 cmake --build $BuildDir --config $Config
 if ($LASTEXITCODE -ne 0) { throw "Test build failed ($LASTEXITCODE)" }
+if ($BuildOnly) { exit 0 }
 
 ctest --test-dir $BuildDir -C $Config --output-on-failure --no-tests=error
 if ($LASTEXITCODE -ne 0) { throw "Tests failed ($LASTEXITCODE)" }

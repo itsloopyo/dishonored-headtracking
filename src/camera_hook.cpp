@@ -43,8 +43,6 @@ struct HookSettings {
     std::uintptr_t gworld = 0;
     std::uintptr_t moduleBase = 0;
     std::uint32_t offPlayerCamera = 0;
-    float positionScale = 0.0f;
-    bool moveCrosshair = false;
 };
 HookSettings g_hook;
 
@@ -383,7 +381,7 @@ void ApplyPositionOffset(const FrameSample& s, const UE3Rotator& clean, void* co
     // 0.40 m to the backward lean, which reads in game as "leaning in barely moves,
     // pulling back moves a lot". x is mirrored the same way and is converted in the
     // same place; its clamp is symmetric so only the direction changes.
-    const float scale = g_hook.positionScale * zoom;
+    const float scale = kWorldUnitsPerMetre * zoom;
     const float oR = -s.pos_x * scale;
     const float oU =  s.pos_y * scale;
     const float oF = -s.pos_z * scale;
@@ -478,9 +476,7 @@ void __fastcall DetourImpl(void* thisptr, void* edx, void* outLoc, void* outRot,
         ApplyHeadRotation(s, clean, tracking->IsWorldSpaceYaw(), zoom, rot);
     }
 
-    if (g_hook.moveCrosshair) {
-        PublishAimMarker(clean, *rot, fov, constrainedAspect, leanRuf);
-    }
+    PublishAimMarker(clean, *rot, fov, constrainedAspect, leanRuf);
     LogTraffic(true, true);
 }
 
@@ -520,8 +516,6 @@ bool InstallCameraHook(const BuildProfile& profile, std::uintptr_t moduleBase,
     g_hook.gworld = moduleBase + profile.rvaGWorld;
     g_hook.moduleBase = moduleBase;
     g_hook.offPlayerCamera = profile.offPlayerCamera;
-    g_hook.positionScale = cfg.position_scale;
-    g_hook.moveCrosshair = cfg.move_crosshair;
 
     InitCameraCollision(profile, moduleBase, cfg);
 

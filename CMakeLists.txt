@@ -83,14 +83,15 @@ endif()
 # Enable with -DDISHONORED_BUILD_TESTS=ON, or run `pixi run test`.
 if(DISHONORED_BUILD_TESTS)
     enable_testing()
-    # src/config.cpp is compiled in, not just its headers: the sanitizers were already
-    # covered but the CALL SITES were not, so swapping SanitizePositiveLimit back to
-    # SanitizeFinite in ReadLimit passed the whole suite. Linking the real parser lets a
-    # test drive an INI through Config::LoadOrCreate and assert what comes out.
+    # The frozen legacy reader is compiled in, not just its headers: the sanitizers were
+    # already covered but the CALL SITES were not, so a test drives an INI through
+    # legacy::Config::Read and asserts what comes out. src/config.cpp gives the table's
+    # defaults.
     add_executable(dishonored_tests
         tests/dishonored_tests.cpp
         src/config.cpp
         src/legacy_config/legacy_config.cpp
+        src/path_utils.cpp
     )
     target_include_directories(dishonored_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -147,17 +148,45 @@ if(DISHONORED_BUILD_TESTS)
 
     add_executable(config_differential_tests
         tests/config_differential/differential_tests.cpp
+        src/config.cpp
         src/legacy_config/legacy_config.cpp
+        src/path_utils.cpp
     )
     target_include_directories(config_differential_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential)
     target_compile_definitions(config_differential_tests PRIVATE
-        DISHONORED_DIFFERENTIAL_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/data")
+        DISHONORED_DIFFERENTIAL_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/data"
+        DISHONORED_COMMITTED_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/CameraUnlock.ini")
     target_link_libraries(config_differential_tests PRIVATE
         cameraunlock dishonored_config_oracle dishonored_hotkeys_oracle)
     if(MSVC)
         target_compile_options(config_differential_tests PRIVATE /W4 /WX /permissive-)
     endif()
     add_test(NAME config_differential_tests COMMAND config_differential_tests)
+
+    # Core's canonical config lint over the committed file and every file the differential
+    # test migrated, which it writes beside itself under migrated.
+    add_test(NAME config_lint COMMAND node
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/lint-migrated.mjs
+        $<TARGET_FILE_DIR:config_differential_tests>/migrated)
+    set_tests_properties(config_lint PROPERTIES DEPENDS config_differential_tests)
+
+    # The committed config against the table, a first start, the toggles' saves and the
+    # legacy file's ANSI path. `--render-config <path>` makes it write the committed file
+    # instead (pixi run render-config).
+    add_executable(config_tests
+        tests/config_tests.cpp
+        src/config.cpp
+        src/legacy_config/legacy_config.cpp
+        src/path_utils.cpp
+    )
+    target_include_directories(config_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(config_tests PRIVATE cameraunlock)
+    target_compile_definitions(config_tests PRIVATE
+        DISHONORED_COMMITTED_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/config/CameraUnlock.ini")
+    if(MSVC)
+        target_compile_options(config_tests PRIVATE /W4 /WX /permissive-)
+    endif()
+    add_test(NAME config_tests COMMAND config_tests)
 endif()

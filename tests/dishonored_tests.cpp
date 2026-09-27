@@ -14,6 +14,7 @@
 #include "camera_collision.h"
 #include "config.h"
 #include "legacy_config/config_sanitize.h"
+#include "legacy_config/legacy_config.h"
 #include "fov_range.h"
 #include "heap_ptr.h"
 #include "ue3_math.h"
@@ -629,48 +630,41 @@ void CameraLocalCompositionTests() {
 void ConfigDefaultTests() {
     std::printf("shipped config defaults\n");
 
-    // The doctrine's numbers, pinned where the mod actually reads them. These used to be
-    // duplicated between an anonymous namespace in config.cpp and the Config struct, with
-    // nothing checking the two agreed.
-    Check(kDefaultLocalSmoothing == 0.0f, "LocalSmoothing ships at 0");
-    Check(kDefaultRemoteSmoothing == 0.15f, "RemoteSmoothing ships at 0.15");
-    Check(kDefaultPosLimitX == 0.30f, "LimitX ships at 0.30");
-    Check(kDefaultPosLimitY == 0.20f, "LimitY ships at 0.20");
-    Check(kDefaultPosLimitZ == 0.40f, "LimitZ ships at 0.40");
-    Check(kDefaultPosLimitZBack == 0.10f, "LimitZBack ships at 0.10");
-    Check(kDefaultPositionScale == 100.0f, "PositionScale ships at 100");
-    Check(kDefaultFov == 0.0f, "the FOV override ships off");
-    Check(kDefaultPort == 4242, "the port is the OpenTrack standard");
-    Check(kDefaultPosLimitZ > kDefaultPosLimitZBack,
+    // The doctrine's numbers, pinned where the mod actually reads them: the config table's
+    // defaults, which a fresh CameraUnlock.ini and Defaults.ini's built-in values give.
+    const Config c = MakeConfigTable().defaults();
+    Check(c.local_smoothing == 0.0f, "LocalSmoothing ships at 0");
+    Check(c.remote_smoothing == 0.15f, "RemoteSmoothing ships at 0.15");
+    Check(c.position.limit_x == 0.30f, "LimitX ships at 0.30");
+    Check(c.position.limit_y == 0.20f && c.position.limit_y_down == 0.20f, "LimitY ships at 0.20 both ways");
+    Check(c.position.limit_z == 0.40f, "LimitZ ships at 0.40");
+    Check(c.position.limit_z_back == 0.10f, "LimitZBack ships at 0.10");
+    Check(kWorldUnitsPerMetre == 100.0f, "a lean converts at 100 cm per metre");
+    Check(c.fov == 0.0f, "the FOV override ships off");
+    Check(c.udp_port == 4242, "the port is the OpenTrack standard");
+    Check(c.position.limit_z > c.position.limit_z_back,
           "the generous z budget sits on leaning in, not on pulling back");
+    Check(c.collision_enabled && c.lean_clamp.skin == 20.0f, "the lean clamp ships on, 20 cm off a wall");
 
-    // The engine's own sign conventions are handled at the engine boundary, so every
-    // user-facing inversion ships off. A default of true here would make a conversion
-    // look like a preference, and a user who turned the three off would get a mirror.
-    Check(kDefaultInvert == false, "the invert flags ship off");
-
-    Config c{};
-    Check(c.pos_limit_x == kDefaultPosLimitX, "the struct default cannot drift from LimitX");
-    Check(c.pos_limit_y == kDefaultPosLimitY, "nor from LimitY");
-    Check(c.pos_limit_z == kDefaultPosLimitZ, "nor from LimitZ");
-    Check(c.pos_limit_z_back == kDefaultPosLimitZBack, "nor from LimitZBack");
-    Check(c.local_smoothing == kDefaultLocalSmoothing, "nor from LocalSmoothing");
-    Check(c.remote_smoothing == kDefaultRemoteSmoothing, "nor from RemoteSmoothing");
-    Check(c.position_scale == kDefaultPositionScale, "nor from PositionScale");
-    Check(c.invert_roll == false, "and roll is not inverted in the pipeline");
-    Check(c.vk_toggle == 0x23 && c.vk_cycle_mode == 0x21 && c.vk_yaw_mode == 0x22,
-          "the nav-cluster bindings are End / Page Up / Page Down");
+    // The engine's own sign conventions are handled at the engine boundary, so the pose
+    // reaches it with no sensitivity and no inversion applied.
+    Check(!c.position.invert_x && !c.position.invert_y && !c.position.invert_z &&
+              c.position.sensitivity_x == 1.0f && c.position.sensitivity_y == 1.0f &&
+              c.position.sensitivity_z == 1.0f,
+          "the position pipeline is identity");
+    Check(c.toggle_key_name == "End, Ctrl+Shift+Y" && c.cycle_tracking_mode_key_name == "PageUp, Ctrl+Shift+G" &&
+              c.yaw_mode_key_name == "PageDown, Ctrl+Shift+H",
+          "the bindings are End / Page Up / Page Down with their Ctrl+Shift chords");
 
     // A limit is a distance. A negative one does not widen or narrow the range, it
     // inverts the processor's clamp into a pair of constants and the camera stops
-    // answering the tracker at all, so it is rejected rather than passed through.
-    Check(SanitizePositiveLimit(0.5f, kDefaultPosLimitX) == 0.5f, "a wider limit is tuning");
-    Check(SanitizePositiveLimit(-0.4f, kDefaultPosLimitZ) == kDefaultPosLimitZ,
+    // answering the tracker at all, so the legacy reader rejected it rather than passing it
+    // through.
+    Check(SanitizePositiveLimit(0.5f, 0.30f) == 0.5f, "a wider limit is tuning");
+    Check(SanitizePositiveLimit(-0.4f, 0.40f) == 0.40f,
           "a negative limit falls back rather than inverting the clamp");
-    Check(SanitizePositiveLimit(0.0f, kDefaultPosLimitZ) == kDefaultPosLimitZ,
-          "and so does a zero one");
-    Check(SanitizePositiveLimit(kNan, kDefaultPosLimitY) == kDefaultPosLimitY,
-          "a non-finite limit takes the default");
+    Check(SanitizePositiveLimit(0.0f, 0.40f) == 0.40f, "and so does a zero one");
+    Check(SanitizePositiveLimit(kNan, 0.20f) == 0.20f, "a non-finite limit takes the default");
 }
 
 // The geometry the collision clamp stops a lean with. It runs inside a detour with a
@@ -716,21 +710,19 @@ void CollisionClampTests() {
 
     // A margin of zero would put the eye exactly on the surface, where the near clip
     // plane renders through it, so the INI boundary refuses one.
-    Check(SanitizePositiveLimit(0.0f, kDefaultCollisionMargin) == kDefaultCollisionMargin,
-          "a zero margin falls back to the shipped one");
+    Check(SanitizePositiveLimit(0.0f, 20.0f) == 20.0f, "a zero margin falls back to the shipped one");
 }
 
-// Drives a real INI through the real parser. The sanitizers were already covered; what
-// was not was that ReadLimit actually calls the right one - swapping it back to the
+// Drives a real INI through the frozen legacy reader. The sanitizers were already covered;
+// what was not was that ReadLimit actually calls the right one - swapping it back to the
 // finite-only check passed the entire suite before these existed.
 void ConfigParseTests() {
-    std::printf("config parsing\n");
+    std::printf("legacy config parsing\n");
 
     // An ABSOLUTE path: the reader goes through GetPrivateProfileString, which resolves
     // a bare filename against the Windows directory rather than the working directory,
     // so a relative path here would silently read nothing and every assertion below
-    // would "pass" by matching the default. The mod always passes an absolute path
-    // (GetModulePath returns a full directory), so this only bites tests.
+    // would "pass" by matching the default.
     char pathBuf[MAX_PATH];
     if (GetFullPathNameA("dishonored_tests_config.ini", MAX_PATH, pathBuf, nullptr) == 0) {
         Check(false, "the test INI path can be resolved");
@@ -758,33 +750,32 @@ void ConfigParseTests() {
         std::fclose(f);
     }
 
-    Config cfg;
-    Check(cfg.LoadOrCreate(path), "an existing INI loads");
+    const legacy::Config shipped;
+    legacy::Config cfg;
+    Check(cfg.Read(path).status == legacy::ReadStatus::Read, "an existing INI loads");
     Check(cfg.udp_port == 4243, "a port inside the bindable range is taken as written");
 
-    Check(cfg.pos_limit_x == kDefaultPosLimitX,
+    Check(cfg.pos_limit_x == shipped.pos_limit_x,
           "a NEGATIVE position limit is refused and the default used, because it would "
           "invert the processor's clamp into a pair of constants");
-    Check(cfg.pos_limit_y == kDefaultPosLimitY, "and so is a zero one");
+    Check(cfg.pos_limit_y == shipped.pos_limit_y, "and so is a zero one");
     Check(cfg.pos_limit_z == 0.5f, "a widened limit is tuning and passes through");
-    Check(cfg.pos_limit_z_back == kDefaultPosLimitZBack, "a non-finite limit takes the default");
+    Check(cfg.pos_limit_z_back == shipped.pos_limit_z_back, "a non-finite limit takes the default");
 
     Check(cfg.collision_enabled == false, "collision can be turned off from the INI");
-    Check(cfg.collision_margin == kDefaultCollisionMargin,
+    Check(cfg.collision_margin == shipped.collision_margin,
           "and a negative margin takes the default rather than seating the eye in the wall");
 
     Check(cfg.sens_yaw == 2.5f, "a sensitivity above 1 is not clamped");
     Check(cfg.sens_pitch == -1.0f, "a negative sensitivity is left alone");
-    Check(cfg.sens_roll == kDefaultSensitivity, "a non-finite sensitivity takes the default");
+    Check(cfg.sens_roll == shipped.sens_roll, "a non-finite sensitivity takes the default");
 
-    // A key the mod no longer has must not resurrect anything, and an unknown key must
-    // not stop the file loading - that is what keeps an existing user's INI working.
-    Check(cfg.world_space_yaw == kDefaultWorldSpaceYaw,
+    Check(cfg.world_space_yaw == shipped.world_space_yaw,
           "a key absent from the file keeps its shipped default");
 
     std::remove(path);
 
-    // A port outside the bindable range is the one config error the mod refuses to
+    // A port outside the bindable range is the one config error the old build refused to
     // start on, rather than silently binding something else.
     {
         std::FILE* f = std::fopen(path, "wb");
@@ -793,11 +784,12 @@ void ConfigParseTests() {
             std::fclose(f);
         }
     }
-    Config bad;
-    Check(!bad.LoadOrCreate(path), "a port below the bindable range fails the load");
+    legacy::Config bad;
+    Check(bad.Read(path).status == legacy::ReadStatus::Refused, "a port below the bindable range refuses the file");
     std::remove(path);
 
-    Check(!cfg.LoadOrCreate(""), "an unresolvable path is a hard error, not a CWD fallback");
+    legacy::Config none;
+    Check(none.Read(path).status == legacy::ReadStatus::Absent, "no file reads as Absent");
 }
 
 void FovOverrideTests() {
