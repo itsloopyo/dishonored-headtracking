@@ -26,4 +26,8 @@ std::wstring GetModuleDirectoryW();
 // MAX_PATH; those builds did not start there.
 std::string LegacyAnsiPath(const std::wstring& path);
 
+// LegacyAnsiPath(@p path) where the ANSI codepage cannot hold @p path and the folder's short
+// name stood in for it; empty otherwise.
+std::string LegacyShortNameAnsiPath(const std::wstring& path);
+
 }

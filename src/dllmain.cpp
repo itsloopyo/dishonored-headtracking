@@ -199,6 +199,17 @@ unsigned InitThreadBody() {
 
     const cameraunlock::config::ConfigLoadResult<Config> loaded = g_configOwner->Load();
     for (const std::string& line : loaded.log) Log::Line("%s", line.c_str());
+    // The owner judges the legacy file unreachable by its own ANSI form of the path, but the
+    // import opens it through the folder's short name, as the build that wrote it did.
+    if (loaded.status == cameraunlock::config::ConfigLoadStatus::Migrated) {
+        const std::string shortPath =
+            LegacyShortNameAnsiPath(folder + std::wstring(kLegacyConfigFileName,
+                                                          kLegacyConfigFileName + std::char_traits<char>::length(kLegacyConfigFileName)));
+        if (!shortPath.empty()) {
+            Log::Line("%s was read through its folder's short name, %s, as the version that wrote it did, "
+                      "and its settings were imported.", kLegacyConfigFileName, shortPath.c_str());
+        }
+    }
     Log::Line("Config: %s", cameraunlock::config::ConfigLoadStatusName(loaded.status));
     // The build DishonoredHeadTracking.ini was written for refused it and did not start, so
     // this one does the same until the player fixes it.

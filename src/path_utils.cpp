@@ -156,6 +156,13 @@ std::string LegacyAnsiPath(const std::wstring& path) {
     return ansi;
 }
 
+std::string LegacyShortNameAnsiPath(const std::wstring& path) {
+    if (!ToAnsiLossless(path).empty()) {
+        return {};
+    }
+    return LegacyAnsiPath(path);
+}
+
 std::wstring GetModuleDirectoryW() {
     return ModuleDirectoryW();
 }
