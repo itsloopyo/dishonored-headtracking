@@ -719,7 +719,7 @@ void CollisionClampTests() {
 void ConfigParseTests() {
     std::printf("legacy config parsing\n");
 
-    // An ABSOLUTE path: the reader goes through GetPrivateProfileString, which resolves
+    // An ABSOLUTE path: the reader goes through the Win32 profile API, which resolves
     // a bare filename against the Windows directory rather than the working directory,
     // so a relative path here would silently read nothing and every assertion below
     // would "pass" by matching the default.
