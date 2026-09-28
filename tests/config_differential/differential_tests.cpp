@@ -17,8 +17,8 @@
 // changes, each of which the import must record as dropped. A sensitivity, inversion or unit
 // scale the player set away from its shipped value is dropped (pose_shaping), and
 // MoveCrosshair=false is dropped (reticle: the game's crosshair always follows the aim now).
-// A value the canonical row cannot hold has no approved rule, so the owner defers that import
-// and the session runs on what the import gave (kUnrepresentable).
+// dev read the four [Position] limits with no upper bound and the rows take 0 to 10, so a limit
+// above 10 imports as 10 and is recorded with the value read (N4).
 //
 // A setting the player never changed from what the published build shipped follows Defaults.ini:
 // the import lists its row in follows_defaults_ini, the tracking mode pair as one unit, and the
@@ -42,7 +42,8 @@
 // compiled (OracleFires), and through the guard the current build registers (CurrentFires).
 //
 // Inputs: no file, an empty file, the dev build's first-run output (no build shipped a config
-// or a launcher seed), and core's corpus over that output.
+// or a launcher seed), that output with a limit above 10 or at 10, and core's corpus over that
+// output, which also sets each limit to 15.
 
 #include "config.h"
 #include "legacy_config/legacy_config.h"
@@ -79,13 +80,8 @@ using namespace DishonoredHeadTracking;
 namespace {
 
 // The published build read the four [Position] limits with no upper bound, and the canonical
-// rows take 0 to 10 metres. Core has no rule for a value outside a concept's range, so the owner
-// defers such a file: it stays as it is, the session runs on what the import read, and nothing
-// is saved.
-const char* const kUnrepresentable =
-    "[Position] LimitX, LimitY, LimitZ or LimitZBack above 10, which the canonical rows cannot hold, so the "
-    "import defers";
-
+// rows take 0 to 10 metres, so a limit above 10 is clamped to 10 (N4). The frozen reader already
+// replaces one that is not above 0.
 constexpr float kMaxCanonicalLimit = 10.0f;
 
 constexpr const char* kFileName = "DishonoredHeadTracking.ini";
@@ -336,10 +332,10 @@ std::vector<cameraunlock::config::testing::MutationKey> MutationKeys() {
         plain("Position", "SensitivityX", "0.5", {"-1.0"}),
         plain("Position", "SensitivityY", "0.5", {"-1.0"}),
         plain("Position", "SensitivityZ", "0.5", {"-1.0"}),
-        plain("Position", "LimitX", "0.5", {"-0.3"}),
-        plain("Position", "LimitY", "0.5", {"-0.2"}),
-        plain("Position", "LimitZ", "0.5", {"-0.4"}),
-        plain("Position", "LimitZBack", "0.2", {"-0.1"}),
+        plain("Position", "LimitX", "0.5", {"-0.3", "15"}),
+        plain("Position", "LimitY", "0.5", {"-0.2", "15"}),
+        plain("Position", "LimitZ", "0.5", {"-0.4", "15"}),
+        plain("Position", "LimitZBack", "0.2", {"-0.1", "15"}),
         plain("Position", "PositionScale", "50"),
         plain("Position", "InvertX", "true"),
         plain("Position", "InvertY", "true"),
@@ -505,7 +501,6 @@ struct Tally {
     struct Run {
         int created = 0;
         int imported = 0;
-        int deferred = 0;
         int refused = 0;
         // Migrated files holding at least one default row.
         int with_default_rows = 0;
@@ -514,6 +509,7 @@ struct Tally {
     } builtin, altered;
     int with_pose_shaping_dropped = 0;
     int with_reticle_dropped = 0;
+    int with_limit_clamped = 0;
     // Inputs where the player changed at least one row, and where they changed the tracking mode.
     int touched = 0;
     int mode_touched = 0;
@@ -521,7 +517,8 @@ struct Tally {
 
 // Every pose-shaping value the frozen reader read is listed in its place, folded where it holds
 // the value the published build shipped and dropped as PoseShaping where it does not;
-// MoveCrosshair is dropped exactly where it was false, and nothing is dropped by any other rule.
+// MoveCrosshair is dropped exactly where it was false, a limit exactly where it is above 10 (N4),
+// with the value read, and nothing is dropped by any other rule.
 void CheckDrops(const std::string& name, const legacy::Config& l, const ImportResult& imported, Tally& tally) {
     const legacy::Config shipped;
     struct Read {
@@ -564,8 +561,23 @@ void CheckDrops(const std::string& name, const legacy::Config& l, const ImportRe
     Check(reticle == !l.move_crosshair, name + ": MoveCrosshair dropped does not match its value");
     if (reticle) ++tally.with_reticle_dropped;
 
+    const std::pair<const char*, float> limits[] = {
+        {"LimitX", l.pos_limit_x}, {"LimitY", l.pos_limit_y}, {"LimitZ", l.pos_limit_z}, {"LimitZBack", l.pos_limit_z_back}};
+    bool clamped = false;
+    for (const auto& [limitKey, value] : limits) {
+        const DroppedValue* drop = FindDrop(imported.dropped, DropRule::NumberOutOfRange, "Position", limitKey);
+        Check((drop != nullptr) == (value > kMaxCanonicalLimit),
+              name + ": [Position] " + limitKey + " clamped does not match its value");
+        if (drop) {
+            Check(std::stof(drop->value) == value,
+                  name + ": [Position] " + limitKey + " is recorded as " + drop->value + ", not the value read");
+        }
+        clamped = clamped || drop != nullptr;
+    }
+    if (clamped) ++tally.with_limit_clamped;
+
     for (const DroppedValue& d : imported.dropped) {
-        Check(d.rule == DropRule::PoseShaping || d.rule == DropRule::Reticle,
+        Check(d.rule == DropRule::PoseShaping || d.rule == DropRule::Reticle || d.rule == DropRule::NumberOutOfRange,
               name + ": the import drops [" + d.section + "] " + d.key + " by a rule this map never applies");
     }
 }
@@ -627,11 +639,15 @@ std::string Names(const ConceptSet& rows) {
 
 // The settings the mod starts on after the migration against the ones the frozen reader's build
 // started on, with the approved changes applied: identity pose shaping (CheckDrops holds the
-// import to recording every value it leaves out) and no reticle switch. The frozen reader's build
-// applied its one LimitY both ways. A row in
-// `follows` runs on `d`, what Defaults.ini gives, instead of the legacy value.
-std::vector<std::string> StartupDifferences(const legacy::Config& l, const Config& m, const ConceptSet& follows,
+// import to recording every value it leaves out), no reticle switch and a limit above 10 at 10
+// (N4). The frozen reader's build applied its one LimitY both ways. A row in `follows` runs on
+// `d`, what Defaults.ini gives, instead of the legacy value.
+std::vector<std::string> StartupDifferences(const legacy::Config& read, const Config& m, const ConceptSet& follows,
                                             const Config& d) {
+    legacy::Config l = read;
+    for (float* limit : {&l.pos_limit_x, &l.pos_limit_y, &l.pos_limit_z, &l.pos_limit_z_back}) {
+        *limit = std::min(*limit, kMaxCanonicalLimit);
+    }
     std::vector<std::string> diff;
     const auto from = [&follows](Concept row) { return follows.count(row) != 0; };
     const auto flag = [&](Concept row, bool got, bool legacyValue, bool defaultsValue, const char* name) {
@@ -681,11 +697,6 @@ std::vector<std::string> StartupDifferences(const legacy::Config& l, const Confi
     const dishonored_oracle_view::FireTable got = CurrentFires(m);
     if (expected != got) diff.push_back("hotkeys: " + FirstFireDifference(expected, got));
     return diff;
-}
-
-bool Unrepresentable(const legacy::Config& l) {
-    return l.pos_limit_x > kMaxCanonicalLimit || l.pos_limit_y > kMaxCanonicalLimit ||
-           l.pos_limit_z > kMaxCanonicalLimit || l.pos_limit_z_back > kMaxCanonicalLimit;
 }
 
 // Every field the table binds, as the canonical renderer writes it, so two Configs compare whole.
@@ -753,22 +764,12 @@ void Comparison2(Scratch& scratch, const Input& input, const ImportRun& import, 
         if (!untouched.count(Concept::PositionEnabled)) ++tally.mode_touched;
     }
 
-    // Imported or deferred, the session runs on the settings the load hands back: Defaults.ini's
+    // The session runs on the settings the load hands back: Defaults.ini's
     // on each row the player never changed, the import's on the rest.
     {
         const std::vector<std::string> d =
             StartupDifferences(import.config, loaded.config, follows, builtin ? g_builtinConfig : g_alteredConfig);
         Check(d.empty(), name + ": comparison 2: " + Join(d));
-    }
-
-    if (Unrepresentable(import.config)) {
-        ++run.deferred;
-        Check(loaded.status == ConfigLoadStatus::Deferred,
-              name + ": " + kUnrepresentable + ", but the load is " + cfg::ConfigLoadStatusName(loaded.status));
-        Check(after.files == Files{{kFileName, *input.bytes}}, name + ": a deferred import created CameraUnlock.ini or another file");
-        Check(loaded.reason.find("cannot be converted") != std::string::npos,
-              name + ": the player is not told which value stops the import: " + loaded.reason);
-        return;
     }
 
     ++run.imported;
@@ -779,6 +780,12 @@ void Comparison2(Scratch& scratch, const Input& input, const ImportRun& import, 
               after.files[1].second == *input.bytes,
           name + ": the folder does not hold DishonoredHeadTracking.ini and CameraUnlock.ini and nothing else");
     Check(Contains(loaded.log, "created from"), name + ": the log does not say where CameraUnlock.ini came from");
+    {
+        const legacy::Config& l = import.config;
+        if (std::max({l.pos_limit_x, l.pos_limit_y, l.pos_limit_z, l.pos_limit_z_back}) > kMaxCanonicalLimit) {
+            Check(Contains(loaded.log, "outside the range this setting takes"), name + ": the log does not name the clamp");
+        }
+    }
     const std::string migrated = ReadBytes(config);
     tally.migrated.insert(migrated);
     for (const Concept row : follows) {
@@ -857,6 +864,19 @@ std::vector<Input> Inputs(const std::string& firstRun) {
     inputs.push_back({"no file", std::nullopt});
     inputs.push_back({"empty file", std::string()});
     inputs.push_back({"dev first-run output", firstRun});
+    // A limit above 10, clamped (N4), and one at 10, which is not.
+    const std::pair<const char*, const char*> limits[] = {
+        {"\r\nLimitX=0.3\r\n", "LimitX=15"},
+        {"\r\nLimitZBack=0.1\r\n", "LimitZBack=10.5"},
+        {"\r\nLimitZ=0.4\r\n", "LimitZ=10"},
+    };
+    for (const auto& [from, to] : limits) {
+        std::string bytes = firstRun;
+        const size_t at = bytes.find(from);
+        if (at == std::string::npos) throw std::runtime_error(std::string("the first-run output has no line ") + from);
+        bytes.replace(at + 2, std::strlen(from) - 4, to);
+        inputs.push_back({std::string("dev first-run output with ") + to, std::move(bytes)});
+    }
     for (auto& m : GenerateIniMutations(firstRun, legacy::ReadKeys(), MutationKeys())) {
         inputs.push_back({"corpus: " + m.name, std::move(m.bytes)});
     }
@@ -931,10 +951,8 @@ int main() {
         for (const auto& [over, run] : {std::pair<const char*, const Tally::Run*>{"at the built-in values", &tally.builtin},
                                         std::pair<const char*, const Tally::Run*>{"changed", &tally.altered}}) {
             std::printf("  over Defaults.ini %s: %d created, %d imported (%d holding a default row, %d a value), "
-                        "%d deferred, %d refused as dev refused them\n",
-                        over, run->created, run->imported, run->with_default_rows, run->with_values, run->deferred,
-                        run->refused);
-            Check(run->deferred > 0, std::string("no input is deferred over ") + over);
+                        "%d refused as dev refused them\n",
+                        over, run->created, run->imported, run->with_default_rows, run->with_values, run->refused);
             Check(run->refused > 0, std::string("no input is refused over ") + over);
             Check(run->with_default_rows > 0, std::string("no import writes default over ") + over);
             Check(run->with_values > 0, std::string("no import writes a value over ") + over);
@@ -942,9 +960,10 @@ int main() {
         std::printf("  %d with a changed sensitivity, inversion or scale dropped (pose_shaping)\n",
                     tally.with_pose_shaping_dropped);
         std::printf("  %d with MoveCrosshair=false dropped (reticle)\n", tally.with_reticle_dropped);
-        std::printf("  deferred: %s\n", kUnrepresentable);
+        std::printf("  %d with a [Position] limit above 10 clamped to 10 (N4)\n", tally.with_limit_clamped);
         Check(tally.with_pose_shaping_dropped > 0, "no input drops a changed pose-shaping value");
         Check(tally.with_reticle_dropped > 0, "no input drops MoveCrosshair");
+        Check(tally.with_limit_clamped >= 5, "the limits above 10 are not each clamped");
         std::printf("  %d with a row the player changed, %d of them the tracking mode\n", tally.touched,
                     tally.mode_touched);
         Check(tally.touched > 0 && tally.mode_touched > 0, "no input changes a row, or none the tracking mode");
