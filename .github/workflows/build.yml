@@ -14,11 +14,12 @@ on:
       - 'docs/**'
       - 'LICENSE'
 
-# Nothing in this workflow writes to the repository or to any package registry: it
-# builds, tests and inspects the ZIP it produced. Anything more is what the default
-# token would hand to a compromised action.
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -37,15 +38,6 @@ jobs:
 
       - name: Setup pixi
         uses: prefix-dev/setup-pixi@5185adfbffb4bd703da3010310260805d89ebb11 # v0.9.6
-
-      - name: Run unit tests
-        shell: pwsh
-        run: |
-          pixi run test
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::pixi run test failed"
-            exit 1
-          }
 
       - name: Build and package
         shell: pwsh

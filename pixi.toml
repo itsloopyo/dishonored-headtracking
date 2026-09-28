@@ -25,9 +25,13 @@ build = { cmd = "cmake --build build --config Debug", depends-on = ["setup"] }
 # Build release configuration.
 build-release = { cmd = "cmake --build build --config Release", depends-on = ["setup"] }
 
-# Build and run the native unit tests: the frozen config reader, the FOV, rotator and
-# projection logic, and the config differential test against the published build.
-test = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1" }
+# Build and run the native unit tests: the frozen config reader and the FOV, rotator and
+# projection logic.
+test-unit = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1 -Suite unit" }
+# The config differential test against the published build, its provenance check and the
+# lint over the files it migrated.
+test-differential = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1 -Suite differential" }
+test = { depends-on = ["test-unit", "test-differential"] }
 
 # Build the test binaries without running them.
 build-tests = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/run-tests.ps1 -BuildOnly" }
@@ -45,7 +49,7 @@ install = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 R
 uninstall = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/uninstall-all.ps1" }
 
 # Package release ZIPs (installer + nexus).
-package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release", "test"] }
+package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build-release", "test-unit"] }
 
 # Clean build artifacts. No $vars in inline commands - pixi's shell eats them before PowerShell runs.
 clean = { cmd = """

@@ -171,6 +171,7 @@ if(DISHONORED_BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/config_differential/lint-migrated.mjs
         $<TARGET_FILE_DIR:config_differential_tests>/migrated)
     set_tests_properties(config_lint PROPERTIES DEPENDS config_differential_tests)
+    set_tests_properties(config_differential_tests config_lint PROPERTIES LABELS differential)
 
     # The committed config against the table, a first start, the toggles' saves and the
     # legacy file's ANSI path. `--render-config <path>` makes it write the committed file

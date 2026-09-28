@@ -18,7 +18,7 @@ Dishonored.
 | d3d8to9 | `65870f2` (inside Ultimate ASI Loader v9.7.4) | BSD-2-Clause | Compiled into the vendored dinput8.dll |
 | xliveless | v9.7.4 (`source/xlive/` in Ultimate ASI Loader) | Public domain | Compiled into the vendored dinput8.dll |
 | MinHook | v1.3.4, modified (in `cameraunlock-core/vendor/minhook`) | BSD-2-Clause | Compiled into `DishonoredHeadTracking.asi` |
-| cameraunlock-core | ac271752d8fcf37e793b70744aa8eb12588d91ea | MIT | Compiled into `DishonoredHeadTracking.asi` |
+| cameraunlock-core | a03c24290fae3a9c61f67adcb7c5ba4eedf69f20 | MIT | Compiled into `DishonoredHeadTracking.asi` |
 | OpenTrack | n/a | ISC | Not bundled; UDP protocol interoperability only |
 
 ---
@@ -777,7 +777,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Git submodule at `cameraunlock-core/`, compiled into `DishonoredHeadTracking.asi`.
 Our own code, MIT licensed, reproduced here so the notices are complete.
 
-- **Version:** pinned commit `ac271752d8fcf37e793b70744aa8eb12588d91ea`
+- **Version:** pinned commit `a03c24290fae3a9c61f67adcb7c5ba4eedf69f20`
 - **License:** MIT
 - **Upstream:** https://github.com/itsloopyo/cameraunlock-core
 - **Usage:** Supplies the shared pose pipeline: UDP receiver, interpolator, smoothing
