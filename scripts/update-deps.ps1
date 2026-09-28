@@ -20,6 +20,24 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
+# Not Get-FileHash: Windows PowerShell 5.1 autoloads it from a script module,
+# and a powershell.exe started from pwsh (GitHub Actions' shell: pwsh)
+# inherits pwsh's PSModulePath, resolves the Core-only
+# Microsoft.PowerShell.Utility first and reports the cmdlet as not recognized.
+function Get-Sha256Hex {
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$LiteralPath)
+
+    $sha    = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead((Convert-Path -LiteralPath $LiteralPath))
+    try {
+        return [BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $stream.Dispose()
+        $sha.Dispose()
+    }
+}
+
 $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectDir = Split-Path -Parent $scriptDir
 
@@ -75,7 +93,7 @@ try {
         throw ("Extracted ASI Loader is not x86 (machine=0x{0:X4}); refusing to vendor it." -f $machine)
     }
 
-    $upstreamSha = (Get-FileHash -LiteralPath $tempDll -Algorithm SHA256).Hash.ToLower()
+    $upstreamSha = Get-Sha256Hex -LiteralPath $tempDll
 
     # Strip before the hash the vendored copy is compared and recorded against, so
     # the idempotency check below sees the file that actually gets committed.
@@ -84,13 +102,13 @@ try {
     & $strip -Path $tempDll
     & $strip -Path $tempDll -VerifyOnly   # throws if anything survived
 
-    $dllSha = (Get-FileHash -LiteralPath $tempDll -Algorithm SHA256).Hash.ToLower()
+    $dllSha = Get-Sha256Hex -LiteralPath $tempDll
 
     # Idempotency: an upstream that has not moved must leave the tree clean. Without
     # this the FetchedAt line rewrites README.md on every run, so `git status` after a
     # no-op refresh shows a timestamp-only diff with no artifact behind it.
     if ((Test-Path -LiteralPath $vendorAsiDll) -and (Test-Path -LiteralPath $vendorAsiLicense) -and (Test-Path -LiteralPath $vendorAsiReadme) -and
-        ((Get-FileHash -LiteralPath $vendorAsiDll -Algorithm SHA256).Hash.ToLower() -eq $dllSha)) {
+        ((Get-Sha256Hex -LiteralPath $vendorAsiDll) -eq $dllSha)) {
         Write-Host "  no change (tag=$($meta.Tag) sha256=$($dllSha.Substring(0,12))... matches on-disk vendor copy)" -ForegroundColor DarkGray
         Write-Host ""
         Write-Host "vendor/ultimate-asi-loader is already up to date." -ForegroundColor Green
