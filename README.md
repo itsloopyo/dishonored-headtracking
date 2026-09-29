@@ -147,7 +147,7 @@ Apart from creating `CameraUnlock.ini` at startup when there is none, the mod wr
 <!-- cameraunlock:config -->
 The mod reads its settings from `Binaries\Win32\CameraUnlock.ini` in the game folder, and creates the file when it starts and finds none. Edit it with any text editor.
 
-A setting set to `default` takes its value from `Defaults.ini`, which every head tracking mod that keeps its settings in `CameraUnlock.ini` reads. Head tracking mods that keep their settings in another file do not read it. Writing a value in place of `default` changes that setting for this game only. When the mod saves a setting that a hotkey changed in game, it writes the new value in place of `default`, so that setting no longer follows `Defaults.ini` in this game until you set it to `default` again.
+A setting set to `default` takes its value from `Defaults.ini`, which every head tracking mod that keeps its settings in `CameraUnlock.ini` reads. Head tracking mods that keep their settings in another file do not read it. Changing a setting in `Defaults.ini` changes it in every game that has it set to `default`. Writing a value in place of `default` changes that setting for this game only. When the mod saves a setting that a hotkey changed in game, it writes the new value in place of `default`, so that setting no longer follows `Defaults.ini` in this game until you set it to `default` again.
 
 `Defaults.ini` is `%AppData%\CameraUnlock\Defaults.ini` on Windows; `$XDG_CONFIG_HOME/CameraUnlock/Defaults.ini` on Linux, or `~/.config/CameraUnlock/Defaults.ini` where `XDG_CONFIG_HOME` is not set, under Wine and Proton too; and `~/Library/Application Support/CameraUnlock/Defaults.ini` on macOS. The mod's log, where it writes one, names the file it read.
 
@@ -168,6 +168,7 @@ The built-in value of each setting set to `default` below:
 - `PositionLimitZ=0.4`
 - `PositionLimitZBack=0.1`
 - `CollisionEnabled=true`
+- `CollisionReleaseSmoothing=0.9`
 - `ToggleKey=End, Ctrl+Shift+Y`
 - `CycleTrackingModeKey=PageUp, Ctrl+Shift+G`
 - `YawModeKey=PageDown, Ctrl+Shift+H`
@@ -182,8 +183,9 @@ With every setting at its default, the file reads:
 ; that keeps its settings in CameraUnlock.ini reads: %AppData%\CameraUnlock\Defaults.ini on
 ; Windows, $XDG_CONFIG_HOME/CameraUnlock/Defaults.ini (normally ~/.config/CameraUnlock) on
 ; Linux, under Wine and Proton too, and ~/Library/Application Support/CameraUnlock/Defaults.ini
-; on macOS. The log names the file it read. Write a value instead of default to change that
-; setting for this game only.
+; on macOS. The log names the file it read. Change a setting in Defaults.ini to change it in
+; every game that has it set to default, or write a value here instead of default to change it
+; for this game only.
 
 [CameraUnlock]
 ; Written by the mod. Leave this section in place.
@@ -224,9 +226,17 @@ PositionLimitZ=default
 ; How far, in metres, leaning back can move the view.
 PositionLimitZBack=default
 ; true: leaning stops at walls instead of moving the view through them.
+; Only games whose mod sweeps the level for walls read this; the rest ignore it.
 CollisionEnabled=default
 ; How far, in centimetres, the view is held off a wall when you lean into it.
 CollisionMargin=20.0
+; The game's own trace mask the wall check runs with. 8382 is 0x20BE: level
+; geometry, movers, terrain, blocking volumes and props, but not characters, so a
+; carried body does not stop the lean.
+; CollisionChannel=8382
+; How gently the view eases back out after a wall stopped a lean.
+; 0 is the quickest, 1 the slowest.
+CollisionReleaseSmoothing=default
 
 [Hotkeys]
 ; Turns head tracking on and off.
@@ -267,14 +277,18 @@ becomes the baseline the zooms are measured against, so your own choice of FOV i
 treated as a zoom.
 
 `CollisionEnabled` (on by default) stops a lean from pushing the camera into a wall.
-Each frame the mod traces the lean it is about to apply against the world's geometry
-and stops the camera `CollisionMargin` centimetres short of the first surface in the way,
-measured along that surface. It is a hard stop, not a slowdown: keep pushing your head
-forward against a wall and the view holds where it is until you move back. Only the
-rendered camera is affected - the trace reads the world and changes nothing in it, and
-where your shots go is unchanged either way. When whatever you were leaning against
-clears, the view returns to your real head position over about a fifth of a second, so
-stepping out from behind a doorframe mid-lean does not snap.
+Each frame the mod sweeps a sphere of radius `CollisionMargin` centimetres along the lean
+it is about to apply, so the edge of a doorframe or the corner of a table beside the
+camera's path stops it as well as a wall straight ahead, and the camera stays that far
+off every surface. Level geometry, doors and other moving parts, terrain and the props the
+game's own traces hit all count; characters do not, so a body you are carrying does not
+stop a lean. `CollisionChannel` is that list, as the game's own trace mask. It is a hard
+stop, not a slowdown: keep pushing your head forward against a wall and the view holds
+where it is until you move back. Only the rendered camera is affected - the check reads
+the world and changes nothing in it, and where your shots go is unchanged either way.
+When whatever you were leaning against clears, the view eases back to your real head
+position, over about a fifth of a second at the default `CollisionReleaseSmoothing` of
+0.9, so stepping out from behind a doorframe mid-lean does not snap.
 
 **Smoothing is chosen per connection, and only loopback counts as local.** A tracker
 sending to `127.0.0.1` gets `LocalSmoothing`; anything else, including a tracker

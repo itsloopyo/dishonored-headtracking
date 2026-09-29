@@ -24,6 +24,12 @@ constexpr const char* kLegacyConfigFileName = "DishonoredHeadTracking.ini";
 // The game's name as cameraunlock-core's data/games.json spells it.
 constexpr const char* kConfigDisplayName = "Dishonored";
 
+// AActor::execTrace's mask when a script trace includes actors (built at 0x006D1206), less
+// TRACE_Pawns. With pawns in, the body the player is carrying sits in front of the eye and
+// would stop every forward lean. Level geometry, movers, terrain, blocking volumes and the
+// props the game's own traces can hit all stay in.
+constexpr int kDefaultCollisionChannel = 0x20BE;
+
 // Core's config with this game's defaults.
 struct Config : cameraunlock::HeadTrackingConfig {
     // Horizontal field of view, in degrees, at the game's default zoom. 0 leaves the game's own
@@ -35,6 +41,7 @@ struct Config : cameraunlock::HeadTrackingConfig {
         // World units (cm) held between the eye and the surface it stopped at, measured along
         // that surface's normal.
         lean_clamp.skin = 20.0f;
+        collision_channel = kDefaultCollisionChannel;
     }
 };
 

@@ -11,7 +11,6 @@
 // the camera or the crosshair without a test saying so.
 
 #include "aim_projection.h"
-#include "camera_collision.h"
 #include "config.h"
 #include "legacy_config/config_sanitize.h"
 #include "legacy_config/legacy_config.h"
@@ -667,46 +666,8 @@ void ConfigDefaultTests() {
     Check(SanitizePositiveLimit(kNan, 0.20f) == 0.20f, "a non-finite limit takes the default");
 }
 
-// The geometry the collision clamp stops a lean with. It runs inside a detour with a
-// live world trace behind it, so these pin the arithmetic on its own.
 void CollisionClampTests() {
-    std::printf("collision clamp geometry\n");
-
-    // A wall 30 units out, holding 20 off it: the eye may travel 10.
-    CheckNear(AllowedLeanDistance(30.0f, 1.0f, 20.0f), 10.0f, 1e-5f,
-              "a lean that meets a wall stops a margin short of it");
-
-    // What it may travel does NOT depend on how hard the head is pushing - there is no
-    // lean length in the expression at all. That is the hard stop: lean further into a
-    // wall and the eye does not move, rather than creeping in by a shrinking fraction.
-    CheckNear(AllowedLeanDistance(30.0f, 1.0f, 20.0f),
-              AllowedLeanDistance(30.0f, 1.0f, 20.0f), 0.0f,
-              "and the stop distance is a property of the world, not of the pose");
-
-    // The margin is measured along the surface normal, so meeting the same wall at
-    // 60 degrees doubles the distance the lean has to stop short by.
-    CheckNear(AllowedLeanDistance(100.0f, 0.5f, 20.0f), 60.0f, 1e-5f,
-              "an oblique hit stops further back along the lean than a square one");
-
-    // A hit shallower than the floor takes the floored pull-back rather than one that
-    // runs away to infinity as the lean turns parallel to the surface.
-    CheckNear(AllowedLeanDistance(200.0f, 0.001f, 20.0f), 100.0f, 1e-5f,
-              "a glancing hit uses the floored approach rather than an unbounded one");
-
-    // Closer than the margin, and there is nothing to give.
-    Check(AllowedLeanDistance(10.0f, 1.0f, 20.0f) == 0.0f,
-          "a wall inside the margin blocks the lean outright");
-    Check(AllowedLeanDistance(0.0f, 1.0f, 20.0f) == 0.0f, "and so does one on the eye");
-
-    // The ray must outrun the lean by a whole pull-back, or a wall just past the lean's
-    // end stays invisible until the lean has already gone through it - which is exactly
-    // the "through the wall, then popped back out" the first version of this shipped.
-    for (float cos : { 1.0f, 0.5f, 0.2f, 0.01f, 0.0f }) {
-        const float pullBack =
-            20.0f / (cos > kMinApproachCos ? cos : kMinApproachCos);
-        Check(pullBack <= TraceOverreach(20.0f) + 1e-5f,
-              "the trace reaches past the lean by at least any pull-back it can demand");
-    }
+    std::printf("collision margin\n");
 
     // A margin of zero would put the eye exactly on the surface, where the near clip
     // plane renders through it, so the INI boundary refuses one.

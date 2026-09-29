@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Leaning no longer takes the camera through the edge of a doorframe, a table corner or a prop beside its path. The wall check used to test one line straight along the lean; it now sweeps a sphere of radius `CollisionMargin` along it, and it stops at props the game's own traces hit as well as level geometry. Characters still do not stop a lean, so a carried body does not block it.
+- Cycling the tracking mode no longer races the frame being drawn, which could make the lean jump for a frame when position tracking came back on.
+
+### Added
+
+- `CollisionChannel`, the game's trace mask the wall check uses, and `CollisionReleaseSmoothing`, how gently the view eases back out after a wall stopped a lean.
+
 ### Changed
 
 - Settings move to `Binaries\Win32\CameraUnlock.ini`. Earlier versions of the mod kept these settings in `DishonoredHeadTracking.ini`, in the same folder. The first time this version starts and finds no `CameraUnlock.ini`, it reads your settings from `DishonoredHeadTracking.ini` and writes them into `CameraUnlock.ini`. It never changes `DishonoredHeadTracking.ini`, and does not read it again while `CameraUnlock.ini` exists.

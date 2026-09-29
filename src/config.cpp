@@ -170,13 +170,18 @@ cameraunlock::config::ConfigTable<Config> MakeConfigTable() {
         {Concept::UdpPort, Concept::EnableOnStartup, Concept::WorldSpaceYaw, Concept::RotationEnabled,
          Concept::LocalSmoothing, Concept::RemoteSmoothing, Concept::PositionEnabled, Concept::PositionLimitX,
          Concept::PositionLimitY, Concept::PositionLimitYDown, Concept::PositionLimitZ, Concept::PositionLimitZBack,
-         Concept::CollisionEnabled, Concept::CollisionMargin, Concept::ToggleKey, Concept::CycleTrackingModeKey,
+         Concept::CollisionEnabled, Concept::CollisionMargin, Concept::CollisionChannel,
+         Concept::CollisionReleaseSmoothing, Concept::ToggleKey, Concept::CycleTrackingModeKey,
          Concept::YawModeKey});
     table.Select(Concept::WorldSpaceYaw).Writable()
         .Select(Concept::RotationEnabled).Writable()
         .Select(Concept::PositionEnabled).Writable();
     table.Select(Concept::CollisionMargin)
         .Comment("How far, in centimetres, the view is held off a wall when you lean into it.");
+    table.Select(Concept::CollisionChannel)
+        .Comment("The game's own trace mask the wall check runs with. 8382 is 0x20BE: level\n"
+                 "geometry, movers, terrain, blocking volumes and props, but not characters, so a\n"
+                 "carried body does not stop the lean.");
     table.Local("Camera", "Fov", &Config::fov, FovCodec{},
                 "Horizontal field of view in degrees at the game's default zoom: 0, or 20 to 170.\n"
                 "0 keeps the game's own FOV - Dishonored has an FOV slider in Options > Graphics,\n"

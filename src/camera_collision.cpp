@@ -3,72 +3,49 @@
 
 #include "camera_collision.h"
 
-#include "heap_ptr.h"
+#include "lean_trace.h"
 #include "logging.h"
+
+#include "cameraunlock/camera/lean_clamp.h"
+#include "cameraunlock/camera/lean_line_sweep.h"
 
 #include <windows.h>
 
 #include <cmath>
-#include <cfloat>
 
 namespace DishonoredHeadTracking {
 
 namespace {
 
-// UWorld::SingleLineCheck, __thiscall(this = GWorld), seven stack arguments, ret 0x1C.
-//
-// Read off AActor::execTrace and AActor::execFastTrace, which are the game's own two
-// script-facing traces and both call this one function with the same argument order:
-//
-//   006D1278  mov  ecx, [0x01449888]      ; GWorld
-//   006D1282  call 0x0064E7A0             ; args pushed right to left, callee cleans
-//
-// It returns TRUE when the line is clear. On a hit it copies the nearest FCheckResult
-// (0x13 dwords, the rep movsd at 0x0064E83A) into the caller's; on a miss it writes only
-// Time = 1.0 and Actor = null (0x0064E874), which is why execTrace and execFastTrace both
-// read the hit off Actor rather than the return value, and why this file does too.
-//
-// The extent argument makes it a box sweep. This mod passes a zero extent - a line - on
-// purpose: a box sweep reports an immediate overlap whenever the eye already sits within
-// the box's own half-width of a wall, which is routine in first person, and would then
-// refuse a lean in ANY direction including away from that wall.
-using SingleLineCheck_t = std::int32_t(__thiscall*)(void* world, void* hit, void* sourceActor,
-                                                   const float* end, const float* start,
-                                                   std::uint32_t traceFlags,
-                                                   const float* extent, void* sourceLight);
+using cameraunlock::math::Vec3;
 
-// TRACE_Movers | TRACE_Level | TRACE_LevelGeometry | TRACE_Terrain, i.e. UE3's
-// TRACE_World: the world the camera can be pushed through and nothing else. It is the
-// exact value AActor::execTrace builds for a script Trace() with bTraceActors false
-// (0x006D120D), so it is the game's own definition rather than a reconstructed one.
-// Pawns and other actors are deliberately not in it - a guard walking past should not
-// shove the player's view.
-constexpr std::uint32_t kTraceWorld = 0x2086u;
+// Longest gap the release is allowed to integrate over. A frame that took longer was a
+// hitch or a load, and easing across it would let the whole release happen in one step.
+constexpr float kMaxCollisionDt = 0.1f;
 
-// FCheckResult, sized and laid out from the two exec natives above: the copy on a hit is
-// 0x4C bytes, execTrace reads its result actor from +0x04 and its HitLocation and
-// HitNormal out-params from +0x08 and +0x14, and both natives seed Time at +0x20 with
-// the 1.0 at 0x011F1340.
-constexpr std::uint32_t kCheckResultSize = 0x4Cu;
-constexpr std::uint32_t kHitActor  = 0x04u;
-constexpr std::uint32_t kHitNormal = 0x14u;
-constexpr std::uint32_t kHitTime   = 0x20u;
+// How far the clean eye may move between two frames before it is a camera cut rather
+// than the player walking: a Blink, a level change, a scripted camera taking over. The
+// allowance belongs to the room it was measured in, so a cut drops it.
+constexpr float kCameraCutUu = 100.0f;
 
-// Below this a lean is not worth a trace, and is too short for the direction it is in to
-// be meaningful.
-constexpr float kMinLeanUu = 0.05f;
+// A change of state is logged at most this often, so a player stepping past a doorframe
+// cannot write a line per frame, and a state that has not changed is still sampled at the
+// slower interval so a clamp that stopped running cannot hide behind a quiet log.
+constexpr ULONGLONG kMinReportIntervalMs = 1000;
+constexpr ULONGLONG kSampleIntervalMs = 30000;
 
-SingleLineCheck_t g_singleLineCheck = nullptr;
-std::uintptr_t g_gworld = 0;
-float g_margin = 0.0f;
-// How far the eye is currently allowed along the lean, in world units. FLT_MAX means
-// nothing is in the way. Paced upward, dropped instantly - see kCollisionReleaseUuPerSecond.
-float g_allowed = FLT_MAX;
+// Touched only from the scene-view detour on the game thread: one camera, one allowance.
+cameraunlock::camera::LeanClamp g_clamp;
+cameraunlock::camera::LineSweep g_sweep;
+// Null is the feature switched off, which LeanClamp passes straight through.
+cameraunlock::camera::LeanQueryFn g_query = nullptr;
+
 LARGE_INTEGER g_lastTick{};
+bool g_hasLastEye = false;
+UE3Vector g_lastEye{};
 
-// Seconds since the previous call, clamped. Returns 0 on the first call, which is the
-// right answer for it: with no elapsed time the release cannot advance, and the first
-// frame's limit comes straight off the trace.
+// Seconds since the previous call, clamped. 0 on the first call after a reset, which is
+// the right answer: with no elapsed time the release cannot advance.
 float ElapsedSeconds() {
     static const double kSecondsPerCount = [] {
         LARGE_INTEGER freq;
@@ -88,113 +65,122 @@ float ElapsedSeconds() {
     return dt > kMaxCollisionDt ? kMaxCollisionDt : dt;
 }
 
-// Once, the first time a lean is actually stopped, and with the numbers behind it. "Is
-// the collision doing anything, and is it stopping at the right distance" is otherwise
-// unanswerable from the log, and it is the first question asked of a camera that still
-// clips.
-void LogFirstBlock(float leanLen, float hitDistance, float approachCos, float allowed) {
-    static bool reported = false;
-    if (reported) {
+enum class LeanState { Clear, Contact, QueryFailed };
+
+const char* StateText(LeanState s) {
+    switch (s) {
+        case LeanState::Clear:       return "the world leaves room for the whole lean";
+        case LeanState::Contact:     return "the lean is held short of a surface";
+        case LeanState::QueryFailed: return "WARN: the world check could not run, so the lean "
+                                            "is not being held off anything";
+    }
+    return "";
+}
+
+// One line per report, carrying the numbers a reader needs to tell a bad margin from a
+// bad trace and to see what the sweep costs: the lean asked for and allowed on this frame,
+// and the average sweep time since the last line.
+void Report(LeanState state, float desired, float allowed, double sweepUs) {
+    static bool s_seen = false;
+    static LeanState s_logged = LeanState::Clear;
+    static ULONGLONG s_lastMs = 0;
+    static double s_totalUs = 0.0;
+    static unsigned s_frames = 0;
+    static unsigned s_changes = 0;
+    static LeanState s_previous = LeanState::Clear;
+
+    s_totalUs += sweepUs;
+    ++s_frames;
+    if (s_seen && state != s_previous) ++s_changes;
+    s_previous = state;
+
+    const ULONGLONG ms = GetTickCount64();
+    const ULONGLONG since = ms - s_lastMs;
+    if (s_seen && !(state != s_logged && since >= kMinReportIntervalMs) &&
+        since < kSampleIntervalMs) {
         return;
     }
-    reported = true;
-    Log::Line("Camera collision engaged: a %.1f unit lean met the world %.1f units out "
-              "(approach %.2f) and was held to %.1f", leanLen, hitDistance, approachCos,
-              allowed);
+    Log::Line("Lean collision: %s (lean %.1f of %.1f cm; %u state changes, sweep %.0f us "
+              "average over %u frames since the last line)",
+              StateText(state), allowed, desired, s_changes, s_totalUs / s_frames, s_frames);
+    s_seen = true;
+    s_logged = state;
+    s_lastMs = ms;
+    s_totalUs = 0.0;
+    s_frames = 0;
+    s_changes = 0;
+}
+
+double MicrosecondsBetween(const LARGE_INTEGER& from, const LARGE_INTEGER& to) {
+    static const double kUsPerCount = [] {
+        LARGE_INTEGER freq;
+        QueryPerformanceFrequency(&freq);
+        return 1e6 / static_cast<double>(freq.QuadPart);
+    }();
+    return static_cast<double>(to.QuadPart - from.QuadPart) * kUsPerCount;
 }
 
 }  // namespace
 
 void InitCameraCollision(const BuildProfile& profile, std::uintptr_t moduleBase,
                          const Config& cfg) {
-    g_singleLineCheck = nullptr;
-    g_gworld = 0;
-    g_allowed = FLT_MAX;
-    g_lastTick.QuadPart = 0;
-
+    ResetCameraCollision();
     if (!cfg.collision_enabled) {
+        g_query = nullptr;
         Log::Line("Camera collision off by config: leaning will push the view through "
                   "walls it gets close enough to");
         return;
     }
 
-    g_margin = cfg.lean_clamp.skin;
-    g_gworld = moduleBase + profile.rvaGWorld;
-    g_singleLineCheck = reinterpret_cast<SingleLineCheck_t>(moduleBase +
-                                                            profile.rvaSingleLineCheck);
-    Log::Line("Camera collision on: the lean is traced against the world through "
-              "UWorld::SingleLineCheck @ 0x%p and stops %.1f units short of what it hits",
-              reinterpret_cast<void*>(g_singleLineCheck), g_margin);
+    const auto flags = static_cast<std::uint32_t>(cfg.collision_channel);
+    lean_trace::Init(profile, moduleBase, flags);
+    g_clamp.SetSettings(cfg.lean_clamp);
+    // The sweep's radius and the clamp's skin are one number: the clamp holds the eye
+    // skin back from what the sweep reports, and the sweep adds its radius back on.
+    g_sweep.cast = &lean_trace::Cast;
+    g_sweep.settings.radius = cfg.lean_clamp.skin;
+    g_query = &cameraunlock::camera::LineSweepQuery;
+    Log::Line("Camera collision on: a %.1f cm sphere is swept along the lean through "
+              "UWorld::SingleLineCheck @ 0x%p with trace flags 0x%X (%d line casts a frame), "
+              "release smoothing %.2f",
+              cfg.lean_clamp.skin, reinterpret_cast<void*>(moduleBase + profile.rvaSingleLineCheck),
+              flags, 1 + 2 * g_sweep.settings.ring_rays, cfg.lean_clamp.release_smoothing);
 }
 
-float AllowedLeanFraction(void* sourceActor, const UE3Vector& eye, float dx, float dy,
-                          float dz) {
-    if (!g_singleLineCheck) {
-        return 1.0f;
+UE3Vector ClampLean(void* controller, const UE3Vector& eye, const UE3Vector& lean) {
+    if (!g_query) {
+        return lean;
     }
 
-    const float leanLen = std::sqrt(dx * dx + dy * dy + dz * dz);
-    if (leanLen < kMinLeanUu) {
-        ResetCameraCollision();
-        return 1.0f;
-    }
-
-    // The trace is a plain read of the collision world, but it is still a call into the
-    // engine from inside a detour, so the pointer it runs against is validated on every
-    // frame rather than cached. A level load replaces the world.
-    const std::uint32_t world = *reinterpret_cast<const std::uint32_t*>(g_gworld);
-    if (!LooksLikeHeapPtr(world)) {
-        return 1.0f;
-    }
-
-    // Deliberately longer than the lean. See TraceOverreach: a ray that stopped where
-    // the lean stops cannot see the wall the lean is about to come to rest against.
-    const float traceLen = leanLen + TraceOverreach(g_margin);
-    const float scale = traceLen / leanLen;
-
-    const float start[3] = { eye.X, eye.Y, eye.Z };
-    const float end[3]   = { eye.X + dx * scale, eye.Y + dy * scale, eye.Z + dz * scale };
-    const float extent[3] = { 0.0f, 0.0f, 0.0f };
-
-    // Aligned because the engine fills it with a rep movsd and this file reads floats
-    // and a pointer straight back out of it.
-    alignas(16) std::uint8_t hit[kCheckResultSize] = {};
-    *reinterpret_cast<float*>(hit + kHitTime) = 1.0f;
-    g_singleLineCheck(reinterpret_cast<void*>(world), hit, sourceActor, end, start,
-                      kTraceWorld, extent, nullptr);
-
-    float target = FLT_MAX;
-    if (*reinterpret_cast<const std::uint32_t*>(hit + kHitActor) != 0) {
-        const auto* normal = reinterpret_cast<const float*>(hit + kHitNormal);
-        // The normal faces back along the lean, so this is positive for a lean running
-        // into the surface. A degenerate normal reads as a glancing hit and takes the
-        // floored pull-back, which stops the lean short - the safe direction to fail.
-        const float approachCos =
-            -(dx * normal[0] + dy * normal[1] + dz * normal[2]) / leanLen;
-        const float hitDistance =
-            *reinterpret_cast<const float*>(hit + kHitTime) * traceLen;
-        target = AllowedLeanDistance(hitDistance, approachCos, g_margin);
-        if (target < leanLen) {
-            LogFirstBlock(leanLen, hitDistance, approachCos, target);
+    if (g_hasLastEye) {
+        const float mx = eye.X - g_lastEye.X, my = eye.Y - g_lastEye.Y, mz = eye.Z - g_lastEye.Z;
+        if (mx * mx + my * my + mz * mz > kCameraCutUu * kCameraCutUu) {
+            ResetCameraCollision();
         }
     }
+    g_lastEye = eye;
+    g_hasLastEye = true;
 
+    g_sweep.cast_context = controller;
+    const Vec3 desired(lean.X, lean.Y, lean.Z);
     const float dt = ElapsedSeconds();
-    if (target <= g_allowed) {
-        g_allowed = target;
-    } else {
-        const float paced = g_allowed + kCollisionReleaseUuPerSecond * dt;
-        g_allowed = paced < target ? paced : target;
-    }
 
-    // A hard stop, not a scaled-back lean: push harder into a wall and the eye does not
-    // move, because what is allowed depends on the world rather than on the pose.
-    return g_allowed >= leanLen ? 1.0f : g_allowed / leanLen;
+    LARGE_INTEGER before, after;
+    QueryPerformanceCounter(&before);
+    const Vec3 allowed = g_clamp.Apply(Vec3(eye.X, eye.Y, eye.Z), desired, dt, g_query, &g_sweep);
+    QueryPerformanceCounter(&after);
+
+    const LeanState state = g_clamp.LastQueryFailed() ? LeanState::QueryFailed
+                          : g_clamp.InContact()       ? LeanState::Contact
+                                                      : LeanState::Clear;
+    Report(state, desired.Magnitude(), allowed.Magnitude(), MicrosecondsBetween(before, after));
+    return UE3Vector{ allowed.x, allowed.y, allowed.z };
 }
 
 void ResetCameraCollision() {
-    g_allowed = FLT_MAX;
+    g_clamp.Reset();
     g_lastTick.QuadPart = 0;
+    g_hasLastEye = false;
 }
 
 }  // namespace DishonoredHeadTracking

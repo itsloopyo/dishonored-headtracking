@@ -156,6 +156,16 @@ bool AnyMenuOpen() {
 // scripted scene or a weapon zoom, that baseline is not the field of view the game
 // renders at normally, and the head is being scaled the whole time.
 void LogZoomCompensation(float fov, float unzoomed, float zoom) {
+    // Every term, on the first frame the camera is read, tracker or not. A baseline that is
+    // wrong by a constant scales the head the whole session and looks right from inside
+    // any single frame, so the gate is this line reading 1.0000 in ordinary play.
+    static bool s_basisLogged = false;
+    if (!s_basisLogged) {
+        s_basisLogged = true;
+        Log::Line("Zoom compensation basis: scene fov %.2f degrees (horizontal), unzoomed "
+                  "fov %.2f degrees (ACamera::DefaultFOV through the FOV override), factor "
+                  "%.4f", fov, unzoomed, zoom);
+    }
     static bool s_logged = false;
     if (s_logged || zoom >= 1.0f) {
         return;
@@ -388,15 +398,21 @@ void ApplyPositionOffset(const FrameSample& s, const UE3Rotator& clean, void* co
     const float dy = sy * oF + cy * oR;
     const float dz = oU;
 
-    const float allowed = AllowedLeanFraction(controller, *loc, dx, dy, dz);
+    const UE3Vector allowed = ClampLean(controller, *loc, UE3Vector{ dx, dy, dz });
 
-    leanRuf[0] = oR * allowed;
-    leanRuf[1] = oU * allowed;
-    leanRuf[2] = oF * allowed;
+    // The clamp only ever shortens the lean along its own direction, so the published
+    // right/up/forward lean shrinks by the same ratio.
+    const float wanted = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const float kept = std::sqrt(allowed.X * allowed.X + allowed.Y * allowed.Y +
+                                 allowed.Z * allowed.Z);
+    const float fraction = wanted > 0.0f ? kept / wanted : 1.0f;
+    leanRuf[0] = oR * fraction;
+    leanRuf[1] = oU * fraction;
+    leanRuf[2] = oF * fraction;
 
-    loc->X += dx * allowed;
-    loc->Y += dy * allowed;
-    loc->Z += dz * allowed;
+    loc->X += allowed.X;
+    loc->Y += allowed.Y;
+    loc->Z += allowed.Z;
 }
 
 // Adds the tracked head rotation to the viewpoint. The composition, the engine's roll

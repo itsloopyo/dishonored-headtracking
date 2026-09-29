@@ -33,6 +33,7 @@ set(MOD_SOURCES
     src/hook_install.cpp
     src/camera_hook.cpp
     src/camera_collision.cpp
+    src/lean_trace.cpp
     src/crosshair_hook.cpp
     src/fov_hook.cpp
 )
