@@ -88,10 +88,6 @@ constexpr std::uint32_t kManagerMainMenu  = 0x2D8;
 constexpr std::uint32_t kManagerPauseMenu = 0x2EC;
 constexpr std::uint32_t kMovieIsOpen      = 0x0C4;
 
-// How far above our own locals a caller's frame pointer may sit before it is garbage
-// rather than a stack frame. One thread stack's worth.
-constexpr std::uintptr_t kMaxCallerFrameDistance = 0x100000u;
-
 constexpr DWORD kTrafficReportIntervalMs = 5000;
 // Ceilings on the two diagnostics that fire from the per-frame detour. Both describe a
 // state that does not change on its own, so repeating them for a whole session adds
@@ -318,12 +314,14 @@ void StandDown() {
 //
 // Fails OPEN. A wrong read here must not be able to switch head tracking off; the two
 // callers this exists to exclude are named explicitly, and anything unrecognised is
-// logged and injected. The guard is that the frame has to be above our own locals and
-// within one stack's reach of them, which a garbage value will not be.
+// logged and injected. The guard is that the return-address slot has to lie between our
+// own locals and the base of this thread's stack, the only span that is committed.
 std::uintptr_t SceneViewCaller(void* callerFrame) {
     const auto frame = reinterpret_cast<std::uintptr_t>(callerFrame);
     const auto here = reinterpret_cast<std::uintptr_t>(&callerFrame);
-    if (frame <= here || frame - here > kMaxCallerFrameDistance || (frame & 3u) != 0) {
+    const auto stackBase = reinterpret_cast<std::uintptr_t>(
+        reinterpret_cast<const NT_TIB*>(NtCurrentTeb())->StackBase);
+    if (frame <= here || frame + 8 > stackBase || (frame & 3u) != 0) {
         return 0;
     }
     return *reinterpret_cast<const std::uintptr_t*>(frame + 4);
@@ -421,11 +419,7 @@ void __fastcall DetourImpl(void* thisptr, void* edx, void* outLoc, void* outRot,
     // read this function, and they read it clean.
     const bool fromSceneView =
         reinterpret_cast<std::uintptr_t>(retaddr) == g_hook.sceneViewReturn;
-    // Read the runtime ONCE. Teardown clears it while game threads are still inside
-    // this function, so a second read after the null check can hand SampleFrame a
-    // pointer the check never saw.
-    TrackingRuntime* const tracking = g_tracking;
-    if (!tracking || !thisptr || !fromSceneView) {
+    if (!thisptr || !fromSceneView) {
         LogTraffic(fromSceneView, false);
         return;
     }
@@ -460,7 +454,7 @@ void __fastcall DetourImpl(void* thisptr, void* edx, void* outLoc, void* outRot,
         return;
     }
 
-    const FrameSample s = tracking->SampleFrame();
+    const FrameSample s = g_tracking->SampleFrame();
     if (!s.has_rotation && !s.has_position) {
         StandDown();
         return;
@@ -473,7 +467,7 @@ void __fastcall DetourImpl(void* thisptr, void* edx, void* outLoc, void* outRot,
         ResetCameraCollision();
     }
     if (s.has_rotation) {
-        ApplyHeadRotation(s, clean, tracking->IsWorldSpaceYaw(), zoom, rot);
+        ApplyHeadRotation(s, clean, g_tracking->IsWorldSpaceYaw(), zoom, rot);
     }
 
     PublishAimMarker(clean, *rot, fov, constrainedAspect, leanRuf);

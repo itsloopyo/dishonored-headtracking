@@ -40,8 +40,10 @@ void TrackingRuntime::Start(const Config& cfg) {
     m_worldSpaceYaw.store(m_cfg.world_space_yaw, std::memory_order_relaxed);
     // The table never loads a pair that names no mode: it reads both as their defaults
     // instead.
-    m_session.SetMode(
-        cameraunlock::DecodeTrackingMode(m_cfg.rotation_enabled, m_cfg.position_enabled).value());
+    const cameraunlock::TrackingMode mode =
+        cameraunlock::DecodeTrackingMode(m_cfg.rotation_enabled, m_cfg.position_enabled).value();
+    m_desiredMode.store(mode, std::memory_order_relaxed);
+    m_session.SetMode(mode);
 
     m_receiver.SetLog([](const std::string& msg) {
         Log::Line("UDP: %s", msg.c_str());
@@ -66,7 +68,12 @@ void TrackingRuntime::ToggleEnabled() {
 }
 
 cameraunlock::TrackingMode TrackingRuntime::CycleTrackingMode() {
-    const cameraunlock::TrackingMode mode = m_session.CycleMode();
+    // Only the hotkey thread writes the desired mode, so a plain load and store cannot lose
+    // a press. Computing from it rather than from the session keeps two presses inside one
+    // frame to two steps.
+    const cameraunlock::TrackingMode mode = static_cast<cameraunlock::TrackingMode>(
+        (static_cast<int>(m_desiredMode.load(std::memory_order_relaxed)) + 1) % 3);
+    m_desiredMode.store(mode, std::memory_order_relaxed);
     switch (mode) {
         case cameraunlock::TrackingMode::RotationAndPosition:
             Log::Line("Tracking mode: rotation + position (6DOF)");
@@ -104,6 +111,8 @@ void ReportNonFinite(const char* channel) {
 
 FrameSample TrackingRuntime::SampleFrame() {
     FrameSample out;
+
+    m_session.SetMode(m_desiredMode.load(std::memory_order_relaxed));
 
     if (!m_enabled.load(std::memory_order_relaxed)) {
         return out;

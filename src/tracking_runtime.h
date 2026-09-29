@@ -67,6 +67,11 @@ private:
 
     std::atomic<bool> m_enabled{false};
     std::atomic<bool> m_worldSpaceYaw{true};
+    // The mode the hotkey asked for. Applied to the session on the game thread in
+    // SampleFrame, because switching position off resets the position interpolator and
+    // processor, which Update() is reading on that thread at the same moment.
+    std::atomic<cameraunlock::TrackingMode> m_desiredMode{
+        cameraunlock::TrackingMode::RotationAndPosition};
 };
 
 }  // namespace DishonoredHeadTracking
