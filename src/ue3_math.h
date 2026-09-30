@@ -187,9 +187,9 @@ inline void MatrixToRotator(const Mat3& M, UE3Rotator* out) {
 // detour so it can be exercised without a running game - the bug it exists to prevent
 // was at the call site, not in the helpers it calls.
 //
-// Roll: the tracker and UE3 agree on the sign here - a tracker roll reaches the engine
-// unchanged. The first build negated it, on the fleet's usual assumption that yaw and
-// roll arrive mirrored, and in game the view tilted the wrong way.
+// Roll: negated. Passed through unchanged, the view tilted against the head in game; the
+// player's old INI had carried InvertRoll=true to cover that until the canonical config
+// stopped importing pose shaping.
 //
 // Yaw: horizon-locked yaw is plain FRotator addition, because UE3 composes yaw outermost
 // about world Z. Camera-local yaw needs the matrix path to rotate about the view's own
@@ -198,16 +198,17 @@ inline void ComposeHeadRotation(const UE3Rotator& clean, float pitchDeg, float y
                                 float rollDeg, bool worldSpaceYaw, UE3Rotator* rot) {
     const std::int32_t cleanPitch = NormalizeUnits(clean.Pitch);
     const std::int32_t pitchUnits = BoundedPitchContribution(cleanPitch, pitchDeg);
+    const float engineRollDeg = -rollDeg;
 
     if (worldSpaceYaw) {
         rot->Yaw  += DegToUnits(yawDeg);
-        rot->Roll += DegToUnits(rollDeg);
+        rot->Roll += DegToUnits(engineRollDeg);
         rot->Pitch = cleanPitch + pitchUnits;
         return;
     }
     const Mat3 cleanM = RotatorToMatrix(clean);
     const Mat3 head = RotatorToMatrix(static_cast<float>(pitchUnits) * kUnitsToRad,
-                                      yawDeg * kDegToRad, rollDeg * kDegToRad);
+                                      yawDeg * kDegToRad, engineRollDeg * kDegToRad);
     MatrixToRotator(MatMul(head, cleanM), rot);
 }
 

@@ -594,14 +594,17 @@ void CameraLocalCompositionTests() {
                   "tipping past vertical");
     }
 
-    // The tracker and UE3 agree on the roll sign, so a POSITIVE tracker roll reaches the
-    // engine positive. The first build negated it here and the view tilted the wrong way
-    // in game.
+    // UE3 rolls the other way from the tracker, so a POSITIVE tracker roll reaches the
+    // engine negated, in both yaw modes.
     {
         UE3Rotator rolled{ 0, 0, 0 };
         ComposeHeadRotation(UE3Rotator{ 0, 0, 0 }, 0.0f, 0.0f, 20.0f, true, &rolled);
-        Check(rolled.Roll == DegToUnits(20.0f),
-              "a positive tracker roll reaches the engine unchanged");
+        Check(rolled.Roll == DegToUnits(-20.0f),
+              "a positive tracker roll reaches the engine negated");
+        UE3Rotator local{ 0, 0, 0 };
+        ComposeHeadRotation(UE3Rotator{ 0, 0, 0 }, 0.0f, 0.0f, 20.0f, false, &local);
+        Check(std::abs(local.Roll - DegToUnits(-20.0f)) <= 1,
+              "and the camera-local path negates it the same way");
         Check(rolled.Pitch == 0 && rolled.Yaw == 0, "and touches nothing else");
     }
 

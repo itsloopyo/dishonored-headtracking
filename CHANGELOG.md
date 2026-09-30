@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Head roll tilts the view the same way as your head. If your `DishonoredHeadTracking.ini` had `InvertRoll=true` to correct this, the correction is now built in, and the setting is gone along with the other pose shaping settings.
 - Leaning no longer takes the camera through the edge of a doorframe, a table corner or a prop beside its path. The wall check used to test one line straight along the lean; it now sweeps a sphere of radius `CollisionMargin` along it, and it stops at props the game's own traces hit as well as level geometry. Characters still do not stop a lean, so a carried body does not block it.
 - Cycling the tracking mode no longer races the frame being drawn, which could make the lean jump for a frame when position tracking came back on.
 
