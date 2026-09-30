@@ -4,7 +4,7 @@
 #include "fov_hook.h"
 
 #include "fov_range.h"
-#include "heap_ptr.h"
+#include "runtime_discovery.h"
 #include "hook_install.h"
 #include "logging.h"
 #include "xmm_guard.h"
@@ -35,13 +35,6 @@ std::uint32_t g_offPlayerCamera = 0;
 // the detour and through the camera hook's EffectiveFov, so it has to be atomic.
 std::atomic<float> g_fov{0.0f};
 
-// ACamera::DefaultFOV, and APlayerController::DefaultFOV for the frames where the
-// controller has not spawned its camera yet. CalcSceneView picks between the two by
-// exactly this rule when it turns the FOV into a LOD distance factor, so basing the
-// override on the same pair keeps it anchored to the engine's own idea of "unzoomed".
-constexpr std::uint32_t kCamDefaultFov        = 0x254;
-constexpr std::uint32_t kControllerDefaultFov = 0x3b4;
-
 // The arithmetic lives in fov_range.h so it can be exercised without a running game.
 // This wrapper adds the one thing that needs the process: saying so, once, when the
 // camera hands back a pair the override cannot be applied to.
@@ -58,19 +51,19 @@ float ApplyOverride(float gameFov, float defaultFov) {
     return ApplyFovOffset(gameFov, defaultFov, configuredFov);
 }
 
-// The controller's PlayerCamera is spawned lazily and cleared on a level change, so it
-// is null for real frames and can hold a half-written value on the frame it is being
-// assigned. Anything that is not a plausible heap object reads the controller's own
-// DefaultFOV - the same answer the null case already gave - rather than pulling a float
-// through it, which is a wild read on the game thread.
+// A camera can be absent during a level change. Unreadable or mismatched objects
+// return an unusable default, which leaves the engine's FOV unchanged.
 float ControllerDefaultFov(const void* controller) {
     const auto* c = static_cast<const std::uint8_t*>(controller);
-    const std::uint32_t cam = *reinterpret_cast<const std::uint32_t*>(c + g_offPlayerCamera);
-    if (!LooksLikeHeapPtr(cam)) {
-        return *reinterpret_cast<const float*>(c + kControllerDefaultFov);
+    std::uint32_t cam = 0;
+    float result = 0.0f;
+    if (!ReadLive(reinterpret_cast<std::uintptr_t>(c) + g_offPlayerCamera, cam)) return 0.0f;
+    if (!cam) {
+        ReadLive(reinterpret_cast<std::uintptr_t>(c) + LiveLayout().controllerDefaultFov, result);
+    } else if (HasLiveClass(reinterpret_cast<const void*>(cam), LiveLayout().cameraClass)) {
+        ReadLive(cam + LiveLayout().camDefaultFov, result);
     }
-    return *reinterpret_cast<const float*>(
-        reinterpret_cast<const std::uint8_t*>(cam) + kCamDefaultFov);
+    return result;
 }
 
 float __cdecl FovImpl(void* thisptr, void* retaddr) {
@@ -79,7 +72,8 @@ float __cdecl FovImpl(void* thisptr, void* retaddr) {
     // The projection matrix is the only thing that gets the override. The same function
     // answers the game's own FOV questions, and those must keep seeing the FOV the game
     // set for itself.
-    if (!thisptr || reinterpret_cast<std::uintptr_t>(retaddr) != g_sceneViewFovReturn) {
+    if (reinterpret_cast<std::uintptr_t>(retaddr) != g_sceneViewFovReturn ||
+        !HasLiveClass(thisptr, LiveLayout().pcClass)) {
         return gameFov;
     }
 
@@ -126,7 +120,7 @@ float EffectiveFov(float gameFov, const void* camera) {
     }
     return ApplyOverride(gameFov, *reinterpret_cast<const float*>(
                                       static_cast<const std::uint8_t*>(camera) +
-                                      kCamDefaultFov));
+                                      LiveLayout().camDefaultFov));
 }
 
 float UnzoomedFov(const void* camera) {
@@ -134,7 +128,7 @@ float UnzoomedFov(const void* camera) {
         return 0.0f;
     }
     const float defaultFov = *reinterpret_cast<const float*>(
-        static_cast<const std::uint8_t*>(camera) + kCamDefaultFov);
+        static_cast<const std::uint8_t*>(camera) + LiveLayout().camDefaultFov);
     return ApplyOverride(defaultFov, defaultFov);
 }
 

@@ -33,11 +33,6 @@ constexpr const char* kLogFile    = "HeadTracking.log";
 constexpr int kInitMaxWaitMs = 30000;
 constexpr int kInitPollMs    = 100;
 constexpr int kHeartbeatMs   = 5000;
-// Tracker state changes worth logging before the log stops being a record of the session
-// and becomes a record of one flaky link. A tracker that keeps losing the face flips this
-// every heartbeat; the first twenty transitions already say so.
-constexpr int kMaxHeartbeatReports = 20;
-
 // Deliberately never destroyed.
 //
 // As namespace-scope objects these had non-trivial destructors, and the CRT runs those
@@ -145,14 +140,11 @@ bool InstallHooks(const BuildProfile& profile, std::uintptr_t moduleBase, const 
 void RunHeartbeat() {
     bool lastReceiving = false;
     bool firstReport = true;
-    int reports = 0;
+
     for (;;) {
         const bool receiving = Tracking().IsReceiving();
-        if ((firstReport || receiving != lastReceiving) && reports < kMaxHeartbeatReports) {
-            ++reports;
-            Log::Line("OpenTrack: %s%s", receiving ? "receiving data" : "no data",
-                      reports == kMaxHeartbeatReports
-                          ? " (further tracker state changes not logged)" : "");
+        if (firstReport || receiving != lastReceiving) {
+            Log::Line("OpenTrack: %s", receiving ? "receiving data" : "no data");
             lastReceiving = receiving;
             firstReport = false;
         }

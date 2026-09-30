@@ -13,11 +13,7 @@ namespace DishonoredHeadTracking {
 // is read from.
 constexpr const char* kGameExeName = "Dishonored.exe";
 
-// One shipped Dishonored build: its PE fingerprint and the RVAs the camera hook
-// pins to. Append-only registry (see AGENTS.md "Maintain compatibility across new
-// patches"): a patch that moves RVAs gets a NEW profile added to the top of
-// kKnownProfiles, never an in-place edit, so users on older builds keep matching
-// their original profile by fingerprint.
+// Discovered hook targets. Historical profiles cross-check discovery on known builds.
 struct BuildProfile {
     const char* name;
     cameraunlock::memory::PeFingerprint fingerprint;
@@ -60,12 +56,7 @@ struct BuildProfile {
     // is built from through it.
     std::uint32_t offPlayerCamera;
 
-    // RVA of the GWorld pointer. Two readers: the menu gate walks
-    // GWorld -> +0x2C0 -> +0x410 -> +0x41C to reach the UI manager and asks the main
-    // menu and pause menu movie players whether they are open, and the collision clamp
-    // loads it as the `this` for UWorld::SingleLineCheck. The second use is what names
-    // it - AActor::execTrace and AActor::execFastTrace both load this exact global into
-    // ECX before that call.
+    // The collision query's UWorld instance, shared with the named GetWorldInfo native.
     std::uintptr_t rvaGWorld;
 
     // UWorld::SingleLineCheck(FCheckResult& Hit, AActor* SourceActor, const FVector& End,
@@ -88,8 +79,7 @@ struct BuildProfile {
 extern const BuildProfile kKnownProfiles[];
 extern const int kKnownProfileCount;
 
-// Returns the profile matching the running EXE, or nullptr when no profile
-// matches (mod stays dormant - no hooks installed).
+// Returns validated discovery results, or nullptr without installing hooks.
 const BuildProfile* MatchRunningProfile();
 
 }  // namespace DishonoredHeadTracking

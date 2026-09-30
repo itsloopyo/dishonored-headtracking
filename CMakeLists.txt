@@ -29,6 +29,8 @@ set(MOD_SOURCES
     src/hotkeys.cpp
     src/tracking_runtime.cpp
     src/build_profile.cpp
+    src/runtime_discovery.cpp
+    src/runtime_layout.cpp
     src/aim_marker.cpp
     src/hook_install.cpp
     src/camera_hook.cpp
@@ -65,6 +67,7 @@ set_target_properties(DishonoredHeadTracking PROPERTIES
 
 target_include_directories(DishonoredHeadTracking PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/cameraunlock-core/vendor/minhook/src/hde
 )
 
 # minhook carries its own include directory, so MinHook.h resolves through the link.
@@ -84,6 +87,15 @@ endif()
 # Enable with -DDISHONORED_BUILD_TESTS=ON, or run `pixi run test`.
 if(DISHONORED_BUILD_TESTS)
     enable_testing()
+    add_executable(runtime_discovery_tests tests/runtime_discovery_tests.cpp)
+    target_include_directories(runtime_discovery_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/cameraunlock-core/cpp/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/cameraunlock-core/vendor/minhook/src/hde)
+    target_link_libraries(runtime_discovery_tests PRIVATE minhook)
+    target_compile_options(runtime_discovery_tests PRIVATE /W4 /WX /permissive-)
+    target_link_options(runtime_discovery_tests PRIVATE /LARGEADDRESSAWARE)
+    add_test(NAME runtime_discovery_tests COMMAND runtime_discovery_tests)
     # The frozen legacy reader is compiled in, not just its headers: the sanitizers were
     # already covered but the CALL SITES were not, so a test drives an INI through
     # legacy::Config::Read and asserts what comes out. src/config.cpp gives the table's
@@ -103,11 +115,6 @@ if(DISHONORED_BUILD_TESTS)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
     if(MSVC)
         target_compile_options(dishonored_tests PRIVATE /W4 /WX /permissive-)
-        # Dishonored.exe is linked large-address-aware, which is the whole reason the
-        # heap-pointer guard takes its ceiling from the OS. MSVC links x86 EXEs
-        # /LARGEADDRESSAWARE:NO by default, so without this the test process reports the
-        # 2 GB ceiling and the assertion passes without ever seeing the case it exists for.
-        target_link_options(dishonored_tests PRIVATE /LARGEADDRESSAWARE)
     endif()
     add_test(NAME dishonored_tests COMMAND dishonored_tests)
 

@@ -6,8 +6,9 @@ licence. Where a licence requires the copyright notice, the conditions and the
 disclaimer to accompany a binary distribution, the full text is reproduced here
 verbatim, and this file ships at the root of every release ZIP we publish.
 
-Nothing in this repository is derived from, or redistributes any part of,
-Dishonored.
+Runtime discovery reads named UE3 metadata and instruction operands from the
+locally installed game. The mod implements its own camera adjustments and does
+not bundle game executables, proprietary libraries or decompiled implementations.
 
 | Component | Version | Licence | How it ships |
 |-----------|---------|---------|--------------|

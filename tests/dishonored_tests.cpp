@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 itsloopyo
+
+#include <windows.h>
 //
 // Behaviour locks for the parts of the mod that are pure arithmetic: the INI boundary
 // sanitizers, the FOV range every hook shares, the UE3 rotator/matrix conversions the
@@ -15,7 +17,7 @@
 #include "legacy_config/config_sanitize.h"
 #include "legacy_config/legacy_config.h"
 #include "fov_range.h"
-#include "heap_ptr.h"
+
 #include "ue3_math.h"
 #include "zoom_compensation.h"
 
@@ -189,44 +191,6 @@ void FiniteSampleTests() {
     Check(!AllFinite(kNan, 0.0f, 0.0f), "a NaN yaw is rejected");
     Check(!AllFinite(0.0f, kInf, 0.0f), "an infinite pitch is rejected");
     Check(!AllFinite(0.0f, 0.0f, -kInf), "a negatively infinite roll is rejected");
-}
-
-void HeapPointerTests() {
-    std::printf("heap pointer guard\n");
-
-    // Both the camera hook's menu walk and the FOV hook's PlayerCamera read follow raw
-    // engine pointers. Anything that is not a plausible, aligned UE3 heap object is a
-    // wild read on the game thread, so both go through this one predicate.
-    Check(LooksLikeHeapPtr(kMinHeapAddress), "the low bound is a plausible object");
-    Check(LooksLikeHeapPtr(0x0A123454u), "a normal aligned heap address is plausible");
-    Check(!LooksLikeHeapPtr(0u), "null is not");
-    Check(!LooksLikeHeapPtr(kMinHeapAddress - 4u), "below the heap span is not");
-    Check(!LooksLikeHeapPtr(0xFFFFFFFCu), "a kernel-range value is not");
-
-    // The upper bound comes from the OS, never a constant. Dishonored.exe is linked
-    // LARGE_ADDRESS_AWARE, so its allocations run past the 2 GB line; a hard-coded
-    // 0x7F000000 ceiling called every one of those a wild pointer and silently switched
-    // head tracking off for the rest of the session once the low half fragmented.
-    //
-    // This binary is linked /LARGEADDRESSAWARE too (see CMakeLists.txt), so the bound it
-    // reads is the same one the game gets. Without that the test would sit at the 2 GB
-    // ceiling and pass no matter what.
-    Check(MaxHeapAddress() > 0x80000000u,
-          "the bound reflects a large-address-aware process, not the 2 GB default");
-    Check(LooksLikeHeapPtr(0x7F000000u),
-          "an address above the old hard-coded ceiling is a plausible object");
-    Check(LooksLikeHeapPtr(0xC0000000u),
-          "and so is one well into the upper half of the address space");
-    Check(LooksLikeHeapPtr(MaxHeapAddress() & ~3u),
-          "the top accepted address is usable");
-    // The ceiling stops short of the true maximum because every caller dereferences
-    // ptr + offset without validating again.
-    Check(!LooksLikeHeapPtr(0xFFFEFFFCu),
-          "the last page before the OS ceiling is refused, leaving room for the offsets "
-          "the hooks add to a validated pointer");
-    // A half-written pointer field is the case that matters: it lands in range but
-    // unaligned, which a bare `cam != 0` check let straight through.
-    Check(!LooksLikeHeapPtr(0x0A123456u), "an unaligned address in range is not");
 }
 
 void RotationMatrixTests() {
@@ -844,7 +808,7 @@ int main() {
     FovRangeTests();
     RotatorUnitTests();
     FiniteSampleTests();
-    HeapPointerTests();
+
     RotationMatrixTests();
     CameraLocalCompositionTests();
     ViewRectTests();

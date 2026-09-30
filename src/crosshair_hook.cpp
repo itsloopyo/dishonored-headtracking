@@ -7,6 +7,7 @@
 #include "aim_projection.h"
 #include "hook_install.h"
 #include "logging.h"
+#include "runtime_discovery.h"
 #include "xmm_guard.h"
 
 #include <windows.h>
@@ -25,32 +26,7 @@ namespace {
 using CrosshairUpdate_t = void(__fastcall*)(void*, void*, void*);
 CrosshairUpdate_t g_original = nullptr;
 
-// HUD fields, all read out of the same function that binds the widgets.
-//
-// The viewport pair is refreshed from the movie immediately before every call we hook,
-// so it is never stale after a resolution change.
-constexpr std::uint32_t kHudViewportW = 0x1e0;
-constexpr std::uint32_t kHudViewportH = 0x1e4;
-// Where the crosshair IS. The HUD eases this toward its target each tick and hands it
-// to Scaleform as the clip's _x / _y. Writing it here, before the update reads it,
-// places the crosshair this frame rather than the next; the target is left alone, so
-// when tracking stops the game's own easing walks the crosshair back to centre with no
-// help from us.
-//
-// `_root` is one-to-one with the viewport in pixels: the HUD does its own letterbox
-// arithmetic in pixel space and hands Scaleform pixel coordinates, and the crosshair is
-// initialised to exactly (width/2, height/2). So an aim point in pixels can be written
-// straight in, with no stage-to-screen conversion and no scale mode to second-guess.
-constexpr std::uint32_t kHudDotX = 0x3d8;
-constexpr std::uint32_t kHudDotY = 0x3dc;
-
 constexpr DWORD kDiagnosticIntervalMs = 1000;
-// A bounded burst, not a running commentary. The line below is the crosshair bring-up
-// diagnostic and it fires from a per-frame hook: a few seconds of it shows the geometry,
-// while writing it for a whole session would bury the startup lines a player is asked to
-// send under thousands of frames of arithmetic.
-constexpr int kMaxDiagnosticLines = 8;
-
 bool g_confirmed = false;
 
 float ReadHudFloat(const std::uint8_t* hud, std::uint32_t offset) {
@@ -65,30 +41,23 @@ void ReportGeometry(const AimMarkerSample& m, float vpW, float vpH, const AimPix
     // is the lean divided by the target distance, and that is arithmetic only when both
     // terms are on the same line.
     static DWORD s_last = 0;
-    static int s_lines = 0;
-    if (s_lines >= kMaxDiagnosticLines) {
-        return;
-    }
     const DWORD now = GetTickCount();
     if (s_last != 0 && now - s_last < kDiagnosticIntervalMs) {
         return;
     }
     s_last = now;
-    ++s_lines;
+
     Log::Line("CROSSHAIR vp=%.0fx%.0f fov=%.1f car=%.2f dir(r,u,f)=(%.3f,%.3f,%.3f) "
               "lean(r,u,f)cm=(%.1f,%.1f,%.1f) ndc=(%.3f,%.3f) px=(%.0f,%.0f)%s",
               vpW, vpH, m.fov_deg, m.constrained_aspect, m.right, m.up, m.forward,
               m.lean_right, m.lean_up, m.lean_forward, px.ndc_x, px.ndc_y, px.x, px.y,
               px.clamped ? " CLAMPED" : "");
-    if (s_lines == kMaxDiagnosticLines) {
-        Log::Line("Crosshair geometry reported %d times; the crosshair keeps following the "
-                  "aim point but will not be logged again this session", kMaxDiagnosticLines);
-    }
+
 }
 
 void __cdecl UpdateCrosshair(void* hudPtr) {
     auto* hud = static_cast<std::uint8_t*>(hudPtr);
-    if (!hud) {
+    if (!HasLiveClass(hud, LiveLayout().hudClass)) {
         return;
     }
 
@@ -97,8 +66,8 @@ void __cdecl UpdateCrosshair(void* hudPtr) {
         return;
     }
 
-    const float vpW = ReadHudFloat(hud, kHudViewportW);
-    const float vpH = ReadHudFloat(hud, kHudViewportH);
+    const float vpW = ReadHudFloat(hud, LiveLayout().hudViewportW);
+    const float vpH = ReadHudFloat(hud, LiveLayout().hudViewportH);
     if (!IsUsableViewport(vpW, vpH)) {
         return;
     }
@@ -110,8 +79,8 @@ void __cdecl UpdateCrosshair(void* hudPtr) {
         return;
     }
 
-    *reinterpret_cast<float*>(hud + kHudDotX) = px.x;
-    *reinterpret_cast<float*>(hud + kHudDotY) = px.y;
+    *reinterpret_cast<float*>(hud + LiveLayout().hudDotX) = px.x;
+    *reinterpret_cast<float*>(hud + LiveLayout().hudDotY) = px.y;
 
     if (!g_confirmed) {
         g_confirmed = true;

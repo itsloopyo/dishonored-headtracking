@@ -7,7 +7,7 @@
 #include "camera_collision.h"
 #include "fov_hook.h"
 #include "fov_range.h"
-#include "heap_ptr.h"
+#include "runtime_discovery.h"
 #include "hook_install.h"
 #include "logging.h"
 #include "ue3_math.h"
@@ -31,7 +31,7 @@ using GetPlayerViewPoint_t = void(__fastcall*)(void* thisptr, void* edx, void* o
 GetPlayerViewPoint_t g_original = nullptr;
 TrackingRuntime* g_tracking = nullptr;
 
-// Everything the detour reads that is only known once the build profile is matched and
+// Everything the detour reads that is only known once runtime discovery is validated and
 // the config is loaded. Written once at install time, before the detour is enabled, and
 // read on the game thread from then on.
 struct HookSettings {
@@ -41,114 +41,22 @@ struct HookSettings {
     std::uintptr_t deProjectCaller = 0;
     std::uintptr_t streamingCaller = 0;
     std::uintptr_t viewportCaller = 0;
-    std::uintptr_t gworld = 0;
+
     std::uintptr_t moduleBase = 0;
     std::uint32_t offPlayerCamera = 0;
 };
 HookSettings g_hook;
 
-// ACamera fields. The FOV the projection matrix is built from comes through
-// ACamera::GetFOVAngle: LockedFOV when the locked bit is set, otherwise the POV cache's
-// own FOV. camera+0x254 looks like a FOV but is DefaultFOV, used only as the divisor
-// that turns the FOV into a LOD distance factor - reading it here would miss every
-// weapon zoom and put the aim marker in the wrong place exactly when aiming. (It is the
-// base the FOV override offsets from, which is why fov_hook.cpp reads it.)
-//
-// The aspect-ratio pair is the other half of the projection. Normally UE3 builds the
-// projection from the viewport's own pixel size, but a view target that constrains the
-// aspect ratio - a cinematic camera - makes CalcSceneView build it from
-// ConstrainedAspectRatio instead and letterbox the view inside the viewport, which
-// moves both the vertical scale and the pixel the aim point lands on.
-constexpr std::uint32_t kCamLockedFovBits = 0x258;
-constexpr std::uint32_t kCamLockedFov     = 0x25c;
-constexpr std::uint32_t kCamPovFov        = 0x348;
-constexpr std::uint8_t  kCamConstrainAspectBit = 0x02;
-constexpr std::uint32_t kCamConstrainedAspect  = 0x260;
-
-// Menus are the ONLY state the mod suppresses in. A scripted camera still renders
-// through this same viewpoint, so head tracking rides along with it: the player can
-// look around inside a cutscene, a takedown or a death cam, and the scripted camera
-// keeps driving where the view is anchored. Nothing about that reaches game logic -
-// only the scene view is injected into - so a cutscene plays out identically whether
-// tracking is on or off.
-//
-// The UI manager's own per-frame dispatch (FUN_00C3DC60) asks exactly this
-// question - "is the main menu movie open, else is the pause menu movie open" - before
-// routing to the handler for each, so these are the game's own definition of being in a
-// menu rather than a heap-diffed guess. The open bit is UGFxMoviePlayer's, corroborated
-// from Start and Close guarding on it symmetrically.
-//
-// The whole walk is plain pointer reads replicated from FUN_00BBF700 rather than a call
-// into the game, and every step is validated, so a broken chain gates nothing and head
-// tracking keeps working. Failing OPEN is deliberate: a wrong read here that failed
-// closed would disable tracking for the entire session with no obvious cause.
-constexpr std::uint32_t kWorldToOwner    = 0x2C0;
-constexpr std::uint32_t kOwnerToHolder   = 0x410;
-constexpr std::uint32_t kHolderToManager = 0x41C;
-constexpr std::uint32_t kManagerMainMenu  = 0x2D8;
-constexpr std::uint32_t kManagerPauseMenu = 0x2EC;
-constexpr std::uint32_t kMovieIsOpen      = 0x0C4;
-
 constexpr DWORD kTrafficReportIntervalMs = 5000;
-// Ceilings on the two diagnostics that fire from the per-frame detour. Both describe a
-// state that does not change on its own, so repeating them for a whole session adds
-// nothing a reader did not have after the first few lines.
-constexpr int kMaxTrafficReports = 6;
-constexpr int kMaxGateReports = 64;
-
-// The marker is ROTATION-ONLY: it projects the clean aim DIRECTION, and deliberately
-// does not correct for the parallax that positional tracking introduces.
-//
-// Leaning moves the rendered eye away from the eye the shot leaves from, so the fixed
-// impact point stops being straight ahead and a direction-based marker sits off it by
-// roughly lean/distance - a few degrees at arm's length, under one across a room,
-// always the same side, shrinking with range.
-//
-// Correcting that needs the distance to the surface the bullet stops on, on the frame
-// being drawn. Dishonored's interaction and aim code is UnrealScript, so there is no
-// native symbol to read a live aim result from, and casting our own ray means calling
-// AActor::Trace with a hand-built FCheckResult. Until one of those exists, the honest
-// choice is no correction at all.
-//
-// It must NOT be approximated with a fixed anchor distance. That was tried here: it
-// makes the marker exact at the chosen range and wrong either side, with the error
-// CHANGING SIDES as the player crosses it, which reads as a broken reticle and sends
-// the next person hunting a sign fault that is not there.
-//
-// Bring parallax back only when BOTH hold:
-//   1. a live per-frame distance to the bullet-blocking surface is available, and
-//   2. it is filtered by collision layer and mask, never by object name.
+// Positional parallax needs a live aim-distance query. A fixed anchor distance
+// would move the error to the opposite side as the player crosses that distance.
 
 enum GateBit {
     kGateNoCamera = 1 << 0,
     kGateBadPov   = 1 << 1,
     kGateMenu     = 1 << 2,
+    kGateLayout   = 1 << 3,
 };
-
-std::uint32_t Deref(std::uintptr_t addr) {
-    return *reinterpret_cast<const std::uint32_t*>(addr);
-}
-
-bool MovieOpen(std::uint32_t manager, std::uint32_t slot) {
-    const std::uint32_t movie = Deref(manager + slot);
-    return LooksLikeHeapPtr(movie) &&
-           (*reinterpret_cast<const std::uint8_t*>(movie + kMovieIsOpen) & 1u) != 0;
-}
-
-bool AnyMenuOpen() {
-    if (!g_hook.gworld) {
-        return false;
-    }
-    const std::uint32_t world = Deref(g_hook.gworld);
-    if (!LooksLikeHeapPtr(world)) return false;
-    const std::uint32_t owner = Deref(world + kWorldToOwner);
-    if (!LooksLikeHeapPtr(owner)) return false;
-    const std::uint32_t holder = Deref(owner + kOwnerToHolder);
-    if (!LooksLikeHeapPtr(holder)) return false;
-    const std::uint32_t manager = Deref(holder + kHolderToManager);
-    if (!LooksLikeHeapPtr(manager)) return false;
-    return MovieOpen(manager, kManagerMainMenu) || MovieOpen(manager, kManagerPauseMenu);
-}
 
 // Says so once, the first time a zoom is scaled for.
 //
@@ -187,17 +95,22 @@ std::uint32_t ReadGate(const std::uint8_t* controller, const UE3Vector* loc,
     *outConstrainedAspect = 0.0f;
     *outZoom = 1.0f;
 
-    const std::uint32_t cam =
-        *reinterpret_cast<const std::uint32_t*>(controller + g_hook.offPlayerCamera);
-    if (!LooksLikeHeapPtr(cam)) {
+    const auto& layout = LiveLayout();
+    std::uint32_t cam = 0;
+    if (!HasLiveClass(controller, layout.pcClass) ||
+        !ReadLive(reinterpret_cast<std::uintptr_t>(controller) + g_hook.offPlayerCamera, cam) ||
+        !HasLiveClass(reinterpret_cast<const void*>(cam), layout.cameraClass)) {
         *outFov = 0.0f;
         return kGateNoCamera;
     }
     const auto* c = reinterpret_cast<const std::uint8_t*>(cam);
 
-    const std::uint8_t fovBits = *reinterpret_cast<const std::uint8_t*>(c + kCamLockedFovBits);
-    const float rawFov = *reinterpret_cast<const float*>(c + ((fovBits & 1u) ? kCamLockedFov
-                                                                            : kCamPovFov));
+    std::uint32_t fovBits = 0, aspectBits = 0;
+    float rawFov = 0.0f, defaultFov = 0.0f;
+    if (!ReadLive(cam + layout.lockedBits, fovBits) ||
+        !ReadLive(cam + ((fovBits & layout.lockedMask) ? layout.lockedFov : layout.povFov), rawFov) ||
+        !ReadLive(cam + layout.camDefaultFov, defaultFov) || !IsUsableFov(defaultFov) ||
+        !ReadLive(cam + layout.aspectBits, aspectBits)) return kGateLayout;
     // What the scene is rendered at, which is the raw FOV unless the player configured
     // an override. Published rather than the raw value so the crosshair is projected
     // with the number the projection matrix was built from.
@@ -209,38 +122,35 @@ std::uint32_t ReadGate(const std::uint8_t* controller, const UE3Vector* loc,
     const float unzoomed = UnzoomedFov(c);
     *outZoom = ZoomCompensation(fov, unzoomed);
     LogZoomCompensation(fov, unzoomed, *outZoom);
-    if (fovBits & kCamConstrainAspectBit) {
-        *outConstrainedAspect = *reinterpret_cast<const float*>(c + kCamConstrainedAspect);
+    if (aspectBits & layout.aspectMask) {
+        if (!ReadLive(cam + layout.aspect, *outConstrainedAspect)) return kGateLayout;
     }
     if (!IsUsableFov(fov) ||
         !std::isfinite(loc->X) || !std::isfinite(loc->Y) || !std::isfinite(loc->Z)) {
         bits |= kGateBadPov;
     }
 
-    if (AnyMenuOpen()) {
+    bool menuOpen = false;
+    if (!ReadMenuState(controller, menuOpen)) return kGateLayout;
+    if (menuOpen) {
         bits |= kGateMenu;
     }
     return bits;
 }
 
-// Why injection stopped, once per transition. Capped because the pointer walk behind the
-// menu bits reads structures that are being rebuilt while a level streams in, so the gate
-// can flap frame to frame: uncapped, one bad load would write a line per frame for as long
-// as it lasted.
 void LogGateChange(std::uint32_t bits, float fov) {
-    static int s_reports = 0;
-    if (s_reports >= kMaxGateReports) {
-        return;
-    }
-    ++s_reports;
-    Log::Line("Gate 0x%02X%s%s%s fov=%.1f%s", bits,
+    static std::uint32_t lastBits = 0xFFFFFFFFu;
+    static DWORD lastTime = 0;
+    const DWORD now = GetTickCount();
+    if (bits == lastBits || (lastTime && now - lastTime < 1000)) return;
+    lastBits = bits;
+    lastTime = now;
+    Log::Line("Gate 0x%02X%s%s%s%s fov=%.1f", bits,
               (bits & kGateNoCamera) ? " NOCAMERA" : "",
-              (bits & kGateBadPov)   ? " BADPOV" : "",
-              (bits & kGateMenu)     ? " MENU" : "",
-              fov,
-              s_reports == kMaxGateReports ? " (further gate changes not logged)" : "");
+              (bits & kGateBadPov) ? " BADPOV" : "",
+              (bits & kGateMenu) ? " MENU" : "",
+              (bits & kGateLayout) ? " LAYOUT" : "", fov);
 }
-
 // Publishes where the game's aim direction lands in the view the player is looking
 // through, so the overlay can put the reticle there. The direction is resolved through
 // the same rotator-to-basis conversion the injection just used rather than an Euler
@@ -264,52 +174,25 @@ void PublishAimMarker(const UE3Rotator& clean, const UE3Rotator& tracked, float 
     marker.active.store(true, std::memory_order_relaxed);
 }
 
-// "No head tracking in game" has exactly two causes worth distinguishing: the hook
-// never runs, or it runs but never sees the scene-view caller. Report the counts every
-// few seconds until an injection actually happens, then go quiet - a working session
-// should not write a log line per five seconds for hours.
 void LogTraffic(bool fromSceneView, bool injected) {
-    static bool s_confirmed = false;
-    static DWORD s_lastLog = 0;
-    static unsigned s_total = 0, s_scene = 0;
-    static int s_reports = 0;
-
-    if (s_confirmed) {
-        return;
+    static bool confirmed = false;
+    static DWORD last = 0;
+    static unsigned total = 0, scene = 0, applied = 0;
+    ++total;
+    if (fromSceneView) ++scene;
+    if (injected) ++applied;
+    if (injected && !confirmed) {
+        confirmed = true;
+        Log::Line("Scene-view injection confirmed");
     }
-    // Ahead of the report cap: the confirmation is the line the whole diagnostic exists
-    // to reach, and injection can start long after the reports have run out.
-    if (injected) {
-        s_confirmed = true;
-        Log::Line("Scene-view injection confirmed: head tracking is reaching the "
-                  "rendered view and nothing else");
-        return;
-    }
-    if (s_reports >= kMaxTrafficReports) {
-        return;
-    }
-
-    ++s_total;
-    if (fromSceneView) ++s_scene;
     const DWORD now = GetTickCount();
-    if (s_lastLog == 0) {
-        s_lastLog = now;
-        return;
-    }
-    if (now - s_lastLog < kTrafficReportIntervalMs) {
-        return;
-    }
-    s_lastLog = now;
-    ++s_reports;
-    Log::Line("Viewpoint: %u calls in the last %us, %u of them from the scene view, "
-              "none injected%s", s_total,
-              static_cast<unsigned>(kTrafficReportIntervalMs / 1000), s_scene,
-              s_reports == kMaxTrafficReports
-                  ? "; no further viewpoint reports this session" : "");
-    s_total = 0;
-    s_scene = 0;
+    if (!last) { last = now; return; }
+    if (now - last < kTrafficReportIntervalMs) return;
+    Log::Line("Viewpoint: %u calls, %u scene-view, %u injected in %us", total, scene,
+              applied, static_cast<unsigned>((now - last) / 1000));
+    last = now;
+    total = scene = applied = 0;
 }
-
 // The frame this call belongs to is not being rendered: hide the marker so the overlay
 // draws nothing, and keep counting for the traffic report.
 void StandDown() {
@@ -337,18 +220,12 @@ std::uintptr_t SceneViewCaller(void* callerFrame) {
 }
 
 void LogSceneViewCaller(std::uintptr_t caller) {
-    constexpr int kMaxLoggedCallers = 4;
-    static std::uintptr_t s_seen[kMaxLoggedCallers] = {};
-    static int s_count = 0;
-    for (int i = 0; i < s_count; ++i) {
-        if (s_seen[i] == caller) return;
-    }
-    // Full table: a caller that cannot be remembered must not be logged either, or every
-    // frame it appears on writes the same line again.
-    if (s_count == kMaxLoggedCallers) {
-        return;
-    }
-    s_seen[s_count++] = caller;
+    static std::uintptr_t lastCaller = UINTPTR_MAX;
+    static DWORD lastTime = 0;
+    const DWORD now = GetTickCount();
+    if (caller == lastCaller || (lastTime && now - lastTime < 1000)) return;
+    lastCaller = caller;
+    lastTime = now;
     if (caller == 0) {
         Log::Line("Scene view caller frame walk failed; leaving viewpoint unchanged");
         return;
@@ -459,11 +336,7 @@ void __fastcall DetourImpl(void* thisptr, void* edx, void* outLoc, void* outRot,
     const std::uint32_t gate = ReadGate(static_cast<std::uint8_t*>(thisptr), loc, &fov,
                                         &constrainedAspect, &zoom);
 
-    static std::uint32_t s_lastGate = 0xFFFFFFFFu;
-    if (gate != s_lastGate) {
-        s_lastGate = gate;
-        LogGateChange(gate, fov);
-    }
+    LogGateChange(gate, fov);
 
     if (gate != 0) {
         StandDown();
@@ -524,7 +397,7 @@ bool InstallCameraHook(const BuildProfile& profile, std::uintptr_t moduleBase,
     g_hook.deProjectCaller = moduleBase + profile.rvaDeProjectCaller;
     g_hook.streamingCaller = moduleBase + profile.rvaStreamingCaller;
     g_hook.viewportCaller = moduleBase + profile.rvaViewportSceneViewCaller;
-    g_hook.gworld = moduleBase + profile.rvaGWorld;
+
     g_hook.moduleBase = moduleBase;
     g_hook.offPlayerCamera = profile.offPlayerCamera;
 
