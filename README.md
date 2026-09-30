@@ -322,7 +322,7 @@ sensitivity, inversion or deadzone: set those in your tracker.
 
 **Nothing happens, and the log says "Staying dormant"**
 - The mod pins its hooks to byte offsets in one specific build of the game, and refuses to touch any other one rather than crash it. Supported: the Steam retail build dated 2022-02-17. If yours differs, `HeadTracking.log` says whether it is newer or older, and the game runs vanilla.
-- If the log says the exe is "tampered/repacked", the mod will not engage on a modified binary.
+- A different executable size or checksum means no profile matched. Include the log when reporting the unsupported build.
 
 **The crosshair sits slightly off where the shot lands when I lean**
 - Expected, and it only affects leaning, not looking. The crosshair follows the aim direction, and positional tracking moves the rendered eye away from the eye the shot leaves from, so the crosshair sits off the impact by roughly your lean divided by the distance to the target. It is largest close up and shrinks with range. Rotation is unaffected. Cycle to rotation only with `Page Up` / `Ctrl+Shift+G` if you would rather have no lean at all.
