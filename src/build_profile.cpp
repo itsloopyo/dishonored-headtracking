@@ -22,6 +22,7 @@ static const BuildProfile kSteamProfile_20220217 = {
     0x1049888u,
     0x24E7A0u,
     0x79FF30u,
+    0x2C5CF3u,
 };
 
 const BuildProfile kKnownProfiles[] = {

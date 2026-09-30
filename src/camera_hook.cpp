@@ -40,6 +40,7 @@ struct HookSettings {
     std::uintptr_t sceneViewReturn = 0;
     std::uintptr_t deProjectCaller = 0;
     std::uintptr_t streamingCaller = 0;
+    std::uintptr_t viewportCaller = 0;
     std::uintptr_t gworld = 0;
     std::uintptr_t moduleBase = 0;
     std::uint32_t offPlayerCamera = 0;
@@ -322,9 +323,7 @@ void StandDown() {
 // then restores the classic frame layout, so its return address sits at [ebp+4] exactly
 // as it would in any other function.
 //
-// Fails OPEN. A wrong read here must not be able to switch head tracking off; the two
-// callers this exists to exclude are named explicitly, and anything unrecognised is
-// logged and injected. The guard is that the return-address slot has to lie between our
+// The return-address slot has to lie between our
 // own locals and the base of this thread's stack, the only span that is committed.
 std::uintptr_t SceneViewCaller(void* callerFrame) {
     const auto frame = reinterpret_cast<std::uintptr_t>(callerFrame);
@@ -351,11 +350,14 @@ void LogSceneViewCaller(std::uintptr_t caller) {
     }
     s_seen[s_count++] = caller;
     if (caller == 0) {
-        Log::Line("Scene view caller frame walk failed; injecting anyway");
+        Log::Line("Scene view caller frame walk failed; leaving viewpoint unchanged");
         return;
     }
-    Log::Line("Scene view requested by RVA 0x%06X",
-              static_cast<unsigned>(caller - g_hook.moduleBase));
+    const char* source = caller == g_hook.viewportCaller ? "viewport" :
+        caller == g_hook.deProjectCaller ? "deprojection" :
+        caller == g_hook.streamingCaller ? "streaming" : "unrecognised; unchanged";
+    Log::Line("Scene view requested by RVA 0x%06X (%s)",
+              static_cast<unsigned>(caller - g_hook.moduleBase), source);
 }
 
 // Moves the viewpoint by the tracked head position, and reports the lean it applied in
@@ -442,9 +444,7 @@ void __fastcall DetourImpl(void* thisptr, void* edx, void* outLoc, void* outRot,
 
     const std::uintptr_t caller = SceneViewCaller(callerFrame);
     LogSceneViewCaller(caller);
-    if (caller == g_hook.deProjectCaller || caller == g_hook.streamingCaller) {
-        // A screen-to-world query, or the texture streamer asking where to prefetch
-        // from. Neither is what the player is looking through.
+    if (caller != g_hook.viewportCaller) {
         LogTraffic(true, false);
         return;
     }
@@ -523,6 +523,7 @@ bool InstallCameraHook(const BuildProfile& profile, std::uintptr_t moduleBase,
     g_hook.sceneViewReturn = moduleBase + profile.rvaCalcSceneViewReturn;
     g_hook.deProjectCaller = moduleBase + profile.rvaDeProjectCaller;
     g_hook.streamingCaller = moduleBase + profile.rvaStreamingCaller;
+    g_hook.viewportCaller = moduleBase + profile.rvaViewportSceneViewCaller;
     g_hook.gworld = moduleBase + profile.rvaGWorld;
     g_hook.moduleBase = moduleBase;
     g_hook.offPlayerCamera = profile.offPlayerCamera;

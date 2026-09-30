@@ -17,12 +17,12 @@ namespace DishonoredHeadTracking {
 
 namespace {
 
-// UDisGFxMoviePlayerHUD, __thiscall(this, float deltaSeconds). The per-frame crosshair
+// UDisGFxMoviePlayerHUD, __thiscall(this, FSceneView* view). The per-frame crosshair
 // update: it recomputes the crosshair's target position, then pushes the CURRENT
 // position into `_root._dot_mc` through Scaleform's SetDisplayInfo, and invokes the
 // clip's own SetCrosshairState to pick the art for the equipped item. Hooking it is how
 // the aim point reaches the crosshair on the frame it belongs to.
-using CrosshairUpdate_t = void(__fastcall*)(void*, void*, float);
+using CrosshairUpdate_t = void(__fastcall*)(void*, void*, void*);
 CrosshairUpdate_t g_original = nullptr;
 
 // HUD fields, all read out of the same function that binds the widgets.
@@ -124,7 +124,7 @@ void __cdecl UpdateCrosshair(void* hudPtr) {
 using CrosshairImpl_t = void(__cdecl*)(void*);
 CrosshairImpl_t g_implPtr = &UpdateCrosshair;
 
-// Stack at entry: [esp] return address, [esp+4] the frame delta; ecx holds the HUD. The
+// Stack at entry: [esp] return address, [esp+4] the scene view; ecx holds the HUD. The
 // tail jump hands the original exactly that, so it runs as if we had never been here and
 // its own `ret 4` returns straight to the game. See xmm_guard.h for the register
 // preservation; ecx is stashed alongside the XMM file because the impl call clobbers it.

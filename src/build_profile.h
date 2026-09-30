@@ -74,11 +74,13 @@ struct BuildProfile {
     // to find out whether the head-tracked eye is about to move into the world.
     std::uintptr_t rvaSingleLineCheck;
 
-    // UDisGFxMoviePlayerHUD's per-frame crosshair update, __thiscall(this, float dt).
+    // UDisGFxMoviePlayerHUD's per-frame crosshair update, __thiscall(this, FSceneView*).
     // It pushes the crosshair's current position into the Scaleform clip that carries
     // the crosshair art, so writing the aim point into the HUD just before it runs is
     // what puts the game's own crosshair under the shot.
     std::uintptr_t rvaCrosshairUpdate;
+
+    std::uintptr_t rvaViewportSceneViewCaller;
 };
 
 // Most-recent build first (diagnostic primary). The Steam build dated 2022-02-17
